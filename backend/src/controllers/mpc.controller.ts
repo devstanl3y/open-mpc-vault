@@ -872,7 +872,11 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
 };
 
 export const signWithSession = async (req: IUserRequest, res: Response) => {
-  const { walletId, messageHash, sessionToken, amountUsd, tokenSymbol, chain, toAddress, contractAddress } = req.body;
+
+  const { messageHash, sessionToken, amountUsd, tokenSymbol, chain, toAddress, contractAddress } = req.body;
+  
+  const walletId = req.body.walletId || req.body.mpcWalletId;
+
   const userId = Number(req.user?.id);
   const context = getRequestContext(req);
 
@@ -1305,13 +1309,11 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
           continue;
         }
 
-        // Skip if no data or missing critical fields
         if (!backupData || typeof backupData !== 'object') continue;
         
         const version = backupData.version || (backupData.shardBId ? 2 : undefined);
         const shardBId = backupData.shardBId;
         
-        // Only process version 3 backups (new format with salt)
         if (version !== 3 || !shardBId) continue;
 
         if (!vaultMap.has(shardBId)) {
