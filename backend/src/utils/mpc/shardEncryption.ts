@@ -25,10 +25,6 @@ export class ShardEncryption {
     );
   }
 
-  /**
-   * Encrypts Shard A with a PIN-derived key
-   * The salt is returned separately so it can be stored and used for decryption
-   */
   static encryptShardA(shard: Buffer, pin: string): EncryptedShard {
     const salt = crypto.randomBytes(SALT_LENGTH);
     const key = this.deriveKey(pin, salt);
@@ -50,14 +46,6 @@ export class ShardEncryption {
     };
   }
 
-  /**
-   * Decrypts Shard A using the PIN and salt
-   * @param encrypted - The encrypted shard data (hex string)
-   * @param iv - Initialization vector (hex string)
-   * @param tag - Authentication tag (hex string)
-   * @param pin - User's PIN
-   * @param salt - Optional salt (hex string). If not provided, attempts to extract from encrypted data (legacy support)
-   */
   static decryptShardA(
     encrypted: string,
     iv: string,
@@ -76,10 +64,13 @@ export class ShardEncryption {
       saltBuffer = Buffer.from(salt, 'hex');
       actualEncryptedData = encryptedBuffer;
     } else {
-
-      console.warn('Legacy decryption format detected - salt embedded in encrypted data');
-      
-      throw new Error('Legacy format not supported. Salt parameter is required.');
+      if (encrypted.includes(':')) {
+        const parts = encrypted.split(':');
+        saltBuffer = Buffer.from(parts[0], 'hex');
+        actualEncryptedData = Buffer.from(parts[1], 'hex');
+      } else {
+        throw new Error('Legacy format not supported. Salt parameter is required.');
+      }
     }
 
     const key = this.deriveKey(pin, saltBuffer);
