@@ -66,6 +66,7 @@ export const createMpcWallet = async (req: IUserRequest, res: Response) => {
 
     const mpcSeed = MpcKeyGenerator.createMpcSeed(12);
     const encryptedShardA = ShardEncryption.encryptShardA(mpcSeed.shardA, pinWithPepper);
+
     const sharedShardBId = await ShardStorage.storeShardB(mpcSeed.shardB, userId);
 
     const chainConfigs = [
