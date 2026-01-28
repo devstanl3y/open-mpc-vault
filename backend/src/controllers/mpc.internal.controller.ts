@@ -14,6 +14,10 @@ if (!PIN_PEPPER) {
 export const getMpcWalletInternal = async (req: Request, res: Response) => {
   const { walletId } = req.params;
 
+  if (typeof walletId !== 'string') {
+    return res.status(400).json({ message: 'Invalid wallet ID format' });
+  }
+
   try {
     const wallet = await prisma.mpcWallet.findUnique({
       where: { id: walletId },
@@ -48,6 +52,10 @@ export const getMpcWalletInternal = async (req: Request, res: Response) => {
 
 export const getWalletShardDataInternal = async (req: Request, res: Response) => {
   const { walletId } = req.params;
+
+  if (typeof walletId !== 'string') {
+    return res.status(400).json({ message: 'Invalid wallet ID format' });
+  }
 
   try {
     const backup = await prisma.shardABackup.findFirst({
@@ -132,6 +140,10 @@ export const encryptShardAInternal = async (req: Request, res: Response) => {
 
 export const getShardBInternal = async (req: Request, res: Response) => {
   const { shardBId } = req.params;
+
+  if (typeof shardBId !== 'string') {
+    return res.status(400).json({ message: 'Invalid shard B ID format' });
+  }
 
   try {
     const shardB = await ShardStorage.retrieveShardB(shardBId);

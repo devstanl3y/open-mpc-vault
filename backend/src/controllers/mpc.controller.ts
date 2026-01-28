@@ -1021,6 +1021,10 @@ export const deleteMpcWallet = async (req: IUserRequest, res: Response) => {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
+  if (typeof walletId !== 'string') {
+    return res.status(400).json({ message: 'Invalid wallet ID format' });
+  }
+
   if (!pin) {
     return res.status(400).json({ message: 'PIN is required' });
   }
