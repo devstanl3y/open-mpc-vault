@@ -996,7 +996,7 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
 
     logSecurityEvent(
       userId,
-      UserSecurityEventType.BIOMETRIC_SESSION_USED,
+      UserSecurityEventType.SIGNING_SESSION_USED,
       context
     );
 
