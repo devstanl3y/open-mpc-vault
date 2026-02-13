@@ -298,7 +298,22 @@ export const importMpcWallet = async (req: IUserRequest, res: Response) => {
           encryptedShardA.salt
         );
 
-        createdWallets.push(mpcWallet);
+        createdWallets.push({
+          id: mpcWallet.id,
+          walletName: mpcWallet.walletName,
+          publicAddress: mpcWallet.publicAddress,
+          curveType: mpcWallet.curveType,
+          chainType: mpcWallet.chainType,
+          derivationPath: mpcWallet.derivationPath,
+          shardBId: sharedShardBId,
+          createdAt: mpcWallet.createdAt,
+          encryptedShardA: {
+            encrypted: encryptedShardA.encrypted,
+            iv: encryptedShardA.iv,
+            tag: encryptedShardA.tag,
+            salt: encryptedShardA.salt
+          }
+        });
       }
 
       zeroizeBuffers(mpcSeed.shardA, mpcSeed.shardB, mpcSeed.entropy);
