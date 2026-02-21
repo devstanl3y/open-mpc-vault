@@ -2,6 +2,10 @@ import { ShamirSecretSharing } from './shamir';
 import { SeedPhraseUtils } from './seedPhrase';
 import { HDWalletDerivation, ChainType, DerivedWallet } from './hdWallet';
 import { CurveType } from '@prisma/client';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { ed25519 } from '@noble/curves/ed25519';
+import bs58 from 'bs58';
 
 export interface MpcSeedShards {
   shardA: Buffer;
@@ -115,17 +119,17 @@ export class MpcKeyGenerator {
       let publicKey: Buffer;
       
       if (chainType === ChainType.ETHEREUM) {
-        const { secp256k1 } = require('@noble/curves/secp256k1');
+        if (!secp256k1.utils.isValidPrivateKey(entropy)) {
+          throw new Error('Invalid Ethereum private key');
+        }
+
         const pubKey = secp256k1.getPublicKey(entropy, false);
-        const crypto = require('crypto');
-        const publicKeyHash = crypto.createHash('sha256').update(Buffer.from(pubKey)).digest();
-        const ripemd = crypto.createHash('ripemd160').update(publicKeyHash).digest();
-        address = '0x' + ripemd.slice(-20).toString('hex');
+        const publicKeyBytes = pubKey.slice(1);
+        const hash = keccak_256(publicKeyBytes);
+        address = '0x' + Buffer.from(hash.slice(-20)).toString('hex');
         publicKey = Buffer.from(pubKey);
       } else if (chainType === ChainType.SOLANA) {
-        const { ed25519 } = require('@noble/curves/ed25519');
         const pubKey = ed25519.getPublicKey(entropy);
-        const bs58 = require('bs58');
         address = bs58.encode(Buffer.from(pubKey));
         publicKey = Buffer.from(pubKey);
       } else {
@@ -173,9 +177,10 @@ export class MpcKeyGenerator {
     gapLimit: number = 20
   ): Promise<WalletImportData[]> {
     if (!isSeedPhrase) {
+      const { shardA, shardB } = this.splitEntropyIntoShards(entropy);
       const wallet = this.deriveWalletFromShards(
-        this.splitEntropyIntoShards(entropy).shardA,
-        this.splitEntropyIntoShards(entropy).shardB,
+        shardA,
+        shardB,
         chainType,
         0,
         0,
