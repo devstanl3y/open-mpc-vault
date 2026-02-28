@@ -6,7 +6,59 @@ import crypto from 'crypto';
 const REDIS_PREFIX = 'mpc:shard_b:';
 const REDIS_TTL = 24 * 60 * 60;
 
+function normalizeRedisString(value: string | Buffer | null): string | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  return Buffer.isBuffer(value) ? value.toString('utf8') : value;
+}
+
 export class ShardStorage {
+  private static async readEncryptedShard(
+    shardId: string,
+    userId?: number
+  ): Promise<string | undefined> {
+    const redisKey = `${REDIS_PREFIX}${shardId}`;
+    let encrypted = normalizeRedisString(await redisPublisher.get(redisKey));
+
+    if (encrypted) {
+      if (userId === undefined) {
+        return encrypted;
+      }
+
+      const ownership = await prisma.mpcShardB.findUnique({
+        where: { id: shardId },
+        select: { userId: true }
+      });
+
+      if (!ownership || ownership.userId !== userId) {
+        return undefined;
+      }
+
+      return encrypted;
+    }
+
+    const record = await prisma.mpcShardB.findUnique({
+      where: { id: shardId }
+    });
+
+    if (!record) {
+      return undefined;
+    }
+
+    if (userId !== undefined && record.userId !== userId) {
+      return undefined;
+    }
+
+    encrypted = record.encryptedShard;
+
+    await redisPublisher.set(redisKey, encrypted, {
+      EX: REDIS_TTL
+    });
+
+    return encrypted;
+  }
+
   static async storeShardB(shard: Buffer, userId: number): Promise<string> {
     const shardId = crypto.randomUUID();
     const encrypted = ShardEncryption.encryptShardB(shard);
@@ -27,23 +79,18 @@ export class ShardStorage {
   }
 
   static async retrieveShardB(shardId: string): Promise<Buffer | undefined> {
-    const redisKey = `${REDIS_PREFIX}${shardId}`;
-    let encrypted = await redisPublisher.get(redisKey);
-    
+    const encrypted = await this.readEncryptedShard(shardId);
     if (!encrypted) {
-      const record = await prisma.mpcShardB.findUnique({
-        where: { id: shardId }
-      });
-      
-      if (!record) {
-        return undefined;
-      }
-      
-      encrypted = record.encryptedShard;
-      
-      await redisPublisher.set(redisKey, encrypted, {
-        EX: REDIS_TTL
-      });
+      return undefined;
+    }
+
+    return ShardEncryption.decryptShardB(encrypted);
+  }
+
+  static async retrieveShardBForUser(shardId: string, userId: number): Promise<Buffer | undefined> {
+    const encrypted = await this.readEncryptedShard(shardId, userId);
+    if (!encrypted) {
+      return undefined;
     }
 
     return ShardEncryption.decryptShardB(encrypted);

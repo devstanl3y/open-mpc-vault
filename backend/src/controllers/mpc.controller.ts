@@ -14,6 +14,8 @@ import { UserSecurityEventType } from '@prisma/client';
 import { getRequestContext } from '../utils/context';
 import { cloudBackupService } from '../utils/cloudBackup';
 import { PolicyService } from '../utils/policyService';
+import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../utils/mpc/walletDerivation';
+import { getSessionShardFromRequestBody } from '../utils/sessionShard';
 
 const PIN_PEPPER = process.env.PIN_PEPPER_SECRET || '';
 
@@ -482,7 +484,7 @@ export const deriveAdditionalWallet = async (req: IUserRequest, res: Response) =
       shardASalt
     );
 
-    shardB = await ShardStorage.retrieveShardB(existingWallet.shardBId);
+    shardB = await ShardStorage.retrieveShardBForUser(existingWallet.shardBId, userId);
     if (!shardB) {
       return res.status(500).json({ message: 'Shard B not found' });
     }
@@ -619,7 +621,7 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       return res.status(400).json({ message: 'Legacy backup format not supported.' });
     }
 
-    shardB = await ShardStorage.retrieveShardB(backupData.shardBId);
+    shardB = await ShardStorage.retrieveShardBForUser(backupData.shardBId, userId);
     
     if (!shardB) {
       return res.status(400).json({ 
@@ -832,7 +834,7 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
       shardASalt 
     );
 
-    shardB = await ShardStorage.retrieveShardB(mpcWallet.shardBId);
+    shardB = await ShardStorage.retrieveShardBForUser(mpcWallet.shardBId, userId);
     if (!shardB) {
       return res.status(500).json({ message: 'Shard B not found' });
     }
@@ -890,6 +892,7 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
 export const signWithSession = async (req: IUserRequest, res: Response) => {
 
   const { messageHash, sessionToken, amountUsd, tokenSymbol, chain, toAddress, contractAddress } = req.body;
+  const sessionShard = getSessionShardFromRequestBody(req.body);
   
   const walletId = req.body.walletId || req.body.mpcWalletId;
 
@@ -904,9 +907,9 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
-  if (!walletId || !messageHash || !sessionToken) {
+  if (!walletId || !messageHash || !sessionToken || !sessionShard) {
     return res.status(400).json({ 
-      message: 'walletId, messageHash, and sessionToken are required' 
+      message: 'walletId, messageHash, sessionToken, and sessionShard are required' 
     });
   }
 
@@ -952,36 +955,34 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
       });
     }
 
-    if (!session.encryptedShardA || !session.shardAIv || !session.shardATag) {
-      return res.status(500).json({ message: 'Session does not contain encrypted shard data' });
-    }
+    shardA = await SessionKeyManager.decryptSessionShard({
+      sessionToken,
+      sessionShard
+    });
 
-    shardA = ShardEncryption.decryptShardA(
-      session.encryptedShardA,
-      session.shardAIv,
-      session.shardATag,
-      session.sessionKey,
-      session.shardASalt 
-    );
-
-    shardB = await ShardStorage.retrieveShardB(mpcWallet.shardBId);
+    shardB = await ShardStorage.retrieveShardBForUser(mpcWallet.shardBId, userId);
     if (!shardB) {
       return res.status(500).json({ message: 'Shard B not found' });
     }
 
-    if (mpcWallet.isSeedPhrase && mpcWallet.chainType) {
-      const derived = MpcKeyGenerator.deriveWalletFromShards(
-        shardA,
-        shardB,
-        mpcWallet.chainType as ChainType,
-        mpcWallet.accountIndex,
-        mpcWallet.addressIndex,
-        true
-      );
-      privateKey = derived.privateKey;
-    } else {
-      privateKey = MpcKeyGenerator.reconstructEntropy(shardA, shardB);
+    const derivedWallet = deriveWalletFromShardsForMpcWallet({
+      shardA,
+      shardB,
+      wallet: {
+        publicAddress: mpcWallet.publicAddress,
+        chainType: mpcWallet.chainType,
+        curveType: mpcWallet.curveType,
+        isSeedPhrase: mpcWallet.isSeedPhrase,
+        accountIndex: mpcWallet.accountIndex,
+        addressIndex: mpcWallet.addressIndex
+      }
+    });
+
+    if (!addressesEqual(derivedWallet.address, mpcWallet.publicAddress)) {
+      return res.status(403).json({ message: 'Session shard does not match selected wallet' });
     }
+
+    privateKey = Buffer.from(derivedWallet.privateKey);
 
     let signature: string;
     const messageBuffer = Buffer.from(messageHash.replace('0x', ''), 'hex');
@@ -1192,7 +1193,7 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
       let shardB: Buffer | undefined;
 
       try {
-        shardB = await ShardStorage.retrieveShardB(shardBId);
+        shardB = await ShardStorage.retrieveShardBForUser(shardBId, userId);
         
         if (!shardB) {
           allErrors.push({
