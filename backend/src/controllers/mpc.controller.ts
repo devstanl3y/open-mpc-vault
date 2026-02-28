@@ -12,7 +12,7 @@ import bcrypt from 'bcrypt';
 import { logSecurityEvent } from '../utils/securityLogger';
 import { UserSecurityEventType } from '@prisma/client';
 import { getRequestContext } from '../utils/context';
-import { cloudBackupService } from '../utils/cloudBackup';
+import { cloudBackupService, type BackupPayloadV4 } from '../utils/cloudBackup';
 import { PolicyService } from '../utils/policyService';
 import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../utils/mpc/walletDerivation';
 import { getSessionShardFromRequestBody } from '../utils/sessionShard';
@@ -25,6 +25,32 @@ function zeroizeBuffers(...buffers: (Buffer | undefined)[]) {
       buffer.fill(0);
     }
   });
+}
+
+function getRecoveryIdentityMismatch(
+  existingWallet: {
+    id: string;
+    userId: number;
+    publicAddress: string;
+    chainType: ChainType | null;
+    curveType: CurveType;
+    derivationPath: string | null;
+    accountIndex: number;
+    addressIndex: number;
+    shardBId: string;
+  },
+  backupData: BackupPayloadV4,
+  userId: number
+): string | null {
+  if (existingWallet.userId !== userId) return 'wallet ownership mismatch';
+  if (!addressesEqual(existingWallet.publicAddress, backupData.publicAddress)) return 'publicAddress mismatch';
+  if (existingWallet.chainType !== backupData.chainType) return 'chainType mismatch';
+  if (existingWallet.curveType !== backupData.curveType) return 'curveType mismatch';
+  if ((existingWallet.derivationPath || '') !== backupData.derivationPath) return 'derivationPath mismatch';
+  if (existingWallet.accountIndex !== backupData.accountIndex) return 'accountIndex mismatch';
+  if (existingWallet.addressIndex !== backupData.addressIndex) return 'addressIndex mismatch';
+  if (existingWallet.shardBId !== backupData.shardBId) return 'shardBId mismatch';
+  return null;
 }
 
 export const createMpcWallet = async (req: IUserRequest, res: Response) => {
@@ -115,6 +141,7 @@ export const createMpcWallet = async (req: IUserRequest, res: Response) => {
         await cloudBackupService.backupShardA(
           userId,
           mpcWallet.id,
+          mpcWallet.publicAddress,
           encryptedShardA.encrypted,
           encryptedShardA.iv,
           encryptedShardA.tag,
@@ -287,6 +314,7 @@ export const importMpcWallet = async (req: IUserRequest, res: Response) => {
         await cloudBackupService.backupShardA(
           userId,
           mpcWallet.id,
+          mpcWallet.publicAddress,
           encryptedShardA.encrypted,
           encryptedShardA.iv,
           encryptedShardA.tag,
@@ -537,6 +565,7 @@ export const deriveAdditionalWallet = async (req: IUserRequest, res: Response) =
     await cloudBackupService.backupShardA(
       userId,
       newWallet.id,
+      newWallet.publicAddress,
       encryptedShardA.encrypted,
       encryptedShardA.iv,
       encryptedShardA.tag,
@@ -591,21 +620,12 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
     const pinWithPepper = pin + PIN_PEPPER;
     if (!await bcrypt.compare(pinWithPepper, user.pin_hash)) return res.status(401).json({ message: 'Invalid PIN' });
 
-    const backupData = await cloudBackupService.fetchBackup(userId, fileId);
-    
-    if (backupData.version === 2) {
-      return res.status(400).json({ 
-        message: 'This backup uses an old format. Please create a new vault and transfer your assets.' 
-      });
-    }
-    
-    if (backupData.version !== 3) {
-      return res.status(400).json({ message: 'Unsupported backup version' });
-    }
+    const backupData = await cloudBackupService.validateRecoveryBackup(userId, fileId, pinWithPepper);
 
-    if (!backupData.salt) {
-      return res.status(400).json({ 
-        message: 'Invalid backup format: missing salt. Please contact support.' 
+    shardB = await ShardStorage.retrieveShardBForUser(backupData.shardBId, userId);
+    if (!shardB) {
+      return res.status(400).json({
+        message: 'Critical: The server-side key for this wallet is missing. Recovery impossible.'
       });
     }
 
@@ -617,64 +637,70 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       backupData.salt
     );
 
-    if (!backupData.shardBId) {
-      return res.status(400).json({ message: 'Legacy backup format not supported.' });
-    }
-
-    shardB = await ShardStorage.retrieveShardBForUser(backupData.shardBId, userId);
-    
-    if (!shardB) {
-      return res.status(400).json({ 
-        message: 'Critical: The server-side key for this wallet is missing. Recovery impossible.' 
-      });
-    }
-
-    const accountIndex = backupData.accountIndex || 0;
-    const addressIndex = backupData.addressIndex || 0;
-
-    const derived = MpcKeyGenerator.deriveWalletFromShards(
+    const derived = deriveWalletFromShardsForMpcWallet({
       shardA,
       shardB,
-      backupData.chainType,
-      accountIndex,
-      addressIndex,
-      true
-    );
-
-    const existingWallet = await prisma.mpcWallet.findUnique({
-      where: { id: backupData.walletId }
+      wallet: {
+        publicAddress: backupData.publicAddress,
+        chainType: backupData.chainType,
+        curveType: backupData.curveType,
+        isSeedPhrase: true,
+        accountIndex: backupData.accountIndex,
+        addressIndex: backupData.addressIndex
+      }
     });
 
-    if (existingWallet && existingWallet.publicAddress !== derived.address) {
-      console.error('Address mismatch during recovery:', {
-        expected: existingWallet.publicAddress,
-        derived: derived.address,
-        accountIndex,
-        addressIndex
-      });
-      
+    if (!addressesEqual(derived.address, backupData.publicAddress)) {
       logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
-      
-      return res.status(400).json({ 
-        message: 'Recovery failed: Address mismatch. Please contact support.' 
+      return res.status(400).json({
+        message: 'Recovery failed: Backup identity mismatch'
       });
+    }
+
+    const existingWallet = await prisma.mpcWallet.findUnique({
+      where: { id: backupData.walletId },
+      select: {
+        id: true,
+        userId: true,
+        publicAddress: true,
+        chainType: true,
+        curveType: true,
+        derivationPath: true,
+        accountIndex: true,
+        addressIndex: true,
+        shardBId: true
+      }
+    });
+
+    if (existingWallet) {
+      const mismatch = getRecoveryIdentityMismatch(existingWallet, backupData, userId);
+      if (mismatch) {
+        console.error('Recovery identity mismatch:', {
+          walletId: backupData.walletId,
+          mismatch
+        });
+        logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+        return res.status(409).json({
+          message: 'Recovery rejected: Existing wallet identity does not match backup'
+        });
+      }
     }
 
     const mpcWallet = await prisma.mpcWallet.upsert({
       where: { id: backupData.walletId },
-      update: { 
+      update: {
         status: ShardStatus.ACTIVE
       },
       create: {
-        id: backupData.walletId, 
+        id: backupData.walletId,
         userId,
         walletName: `Recovered ${backupData.chainType} Wallet`,
-        publicAddress: derived.address,
+        publicAddress: backupData.publicAddress,
         curveType: backupData.curveType,
         chainType: backupData.chainType,
         derivationPath: backupData.derivationPath,
-        accountIndex: accountIndex,
-        addressIndex: addressIndex,
+        accountIndex: backupData.accountIndex,
+        addressIndex: backupData.addressIndex,
         isImported: true,
         isSeedPhrase: true,
         shardBId: backupData.shardBId,
@@ -682,10 +708,15 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       }
     });
 
+    await prisma.user.update({
+      where: { id: userId },
+      data: { mpc_enabled: true }
+    });
+
     logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_SUCCESS, context);
 
-    return res.status(200).json({ 
-      message: 'Wallet recovered successfully', 
+    return res.status(200).json({
+      message: 'Wallet recovered successfully',
       wallet: mpcWallet,
       encryptedShardA: {
         encrypted: backupData.encryptedShardA,
@@ -696,7 +727,17 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
     });
 
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const isValidationError =
+      /backup|integrity|checksum|metadata|unsupported|invalid|mismatch/i.test(errorMessage);
+
     console.error('Recovery error:', error);
+    if (isValidationError) {
+      logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+      return res.status(400).json({
+        message: `Recovery failed: ${errorMessage}`
+      });
+    }
     logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
     res.status(500).json({ message: 'Failed to recover from cloud' });
   } finally {
@@ -1158,13 +1199,13 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
       return res.status(404).json({ message: 'No backups found in cloud' });
     }
 
-    const backupsByVault = new Map<string, any[]>();
+    const backupsByVault = new Map<string, Array<BackupPayloadV4 & { fileId: string }>>();
+    const allErrors: Array<Record<string, string>> = [];
     
     for (const backup of allBackups) {
       try {
-        const backupData = await cloudBackupService.fetchBackup(userId, backup.id!);
-        
-        if (backupData.version !== 3 || !backupData.shardBId) continue;
+        if (!backup.id) continue;
+        const backupData = await cloudBackupService.validateRecoveryBackup(userId, backup.id, pinWithPepper);
 
         if (!backupsByVault.has(backupData.shardBId)) {
           backupsByVault.set(backupData.shardBId, []);
@@ -1175,18 +1216,22 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
           ...backupData
         });
       } catch (error) {
-        console.error(`Failed to fetch backup ${backup.id}:`, error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        allErrors.push({
+          fileId: backup.id || 'unknown',
+          error: errorMessage
+        });
       }
     }
 
     if (backupsByVault.size === 0) {
       return res.status(404).json({ 
-        message: 'No valid backups found. Please create a new vault.' 
+        message: 'No valid backups found. Ensure backups use the latest format.',
+        errors: allErrors.length > 0 ? allErrors : undefined
       });
     }
 
     const allRecoveredWallets = [];
-    const allErrors = [];
 
     for (const [shardBId, vaultBackups] of backupsByVault.entries()) {
       let shardA: Buffer | undefined;
@@ -1213,44 +1258,68 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
               backupData.salt
             );
 
-            const accountIndex = backupData.accountIndex || 0;
-            const addressIndex = backupData.addressIndex || 0;
-
-            const derived = MpcKeyGenerator.deriveWalletFromShards(
+            const derived = deriveWalletFromShardsForMpcWallet({
               shardA,
-              shardB!,
-              backupData.chainType,
-              accountIndex,
-              addressIndex,
-              true
-            );
-
-            const existingWallet = await prisma.mpcWallet.findUnique({
-              where: { id: backupData.walletId }
+              shardB,
+              wallet: {
+                publicAddress: backupData.publicAddress,
+                chainType: backupData.chainType,
+                curveType: backupData.curveType,
+                isSeedPhrase: true,
+                accountIndex: backupData.accountIndex,
+                addressIndex: backupData.addressIndex
+              }
             });
 
-            if (existingWallet && existingWallet.publicAddress !== derived.address) {
+            if (!addressesEqual(derived.address, backupData.publicAddress)) {
               allErrors.push({
                 chainType: backupData.chainType,
                 walletId: backupData.walletId,
-                error: 'Address mismatch'
+                error: 'backup identity mismatch'
               });
               continue;
+            }
+
+            const existingWallet = await prisma.mpcWallet.findUnique({
+              where: { id: backupData.walletId },
+              select: {
+                id: true,
+                userId: true,
+                publicAddress: true,
+                chainType: true,
+                curveType: true,
+                derivationPath: true,
+                accountIndex: true,
+                addressIndex: true,
+                shardBId: true
+              }
+            });
+
+            if (existingWallet) {
+              const mismatch = getRecoveryIdentityMismatch(existingWallet, backupData, userId);
+              if (mismatch) {
+                allErrors.push({
+                  chainType: backupData.chainType,
+                  walletId: backupData.walletId,
+                  error: `existing wallet mismatch (${mismatch})`
+                });
+                continue;
+              }
             }
 
             const mpcWallet = await prisma.mpcWallet.upsert({
               where: { id: backupData.walletId },
               update: { status: ShardStatus.ACTIVE },
               create: {
-                id: backupData.walletId, 
+                id: backupData.walletId,
                 userId,
                 walletName: `Recovered ${backupData.chainType} Wallet`,
-                publicAddress: derived.address,
+                publicAddress: backupData.publicAddress,
                 curveType: backupData.curveType,
                 chainType: backupData.chainType,
                 derivationPath: backupData.derivationPath,
-                accountIndex: accountIndex,
-                addressIndex: addressIndex,
+                accountIndex: backupData.accountIndex,
+                addressIndex: backupData.addressIndex,
                 isImported: true,
                 isSeedPhrase: true,
                 shardBId: backupData.shardBId,
@@ -1349,7 +1418,7 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
 
     const vaultMap = new Map<string, {
       shardBId: string;
-      wallets: any[];
+      wallets: Array<{ chainType: ChainType; walletId: string; fileId: string }>;
       createdAt: Date;
     }>();
 
@@ -1357,33 +1426,29 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
       try {
         if (!backup || !backup.id) continue;
 
-        let backupData;
+        let parsed: BackupPayloadV4;
         try {
-          backupData = await cloudBackupService.fetchBackup(userId, backup.id);
+          const backupData = await cloudBackupService.fetchBackup(userId, backup.id);
+          parsed = cloudBackupService.parseBackupPayload(backupData);
         } catch (fetchError) {
-          console.error(`[listRecoverableVaults] Failed to fetch backup ${backup.id}:`, fetchError);
+          console.error(`[listRecoverableVaults] Failed to fetch/parse backup ${backup.id}:`, fetchError);
           continue;
         }
 
-        if (!backupData || typeof backupData !== 'object') continue;
-        
-        const version = backupData.version || (backupData.shardBId ? 2 : undefined);
-        const shardBId = backupData.shardBId;
-        
-        if (version !== 3 || !shardBId) continue;
+        const shardBId = parsed.shardBId;
 
         if (!vaultMap.has(shardBId)) {
           vaultMap.set(shardBId, {
-            shardBId: shardBId,
+            shardBId,
             wallets: [],
-            createdAt: new Date(backupData.timestamp || backup.createdTime || Date.now())
+            createdAt: new Date(parsed.timestamp || backup.createdTime || Date.now())
           });
         }
 
         const vault = vaultMap.get(shardBId)!;
         vault.wallets.push({
-          chainType: backupData.chainType,
-          walletId: backupData.walletId,
+          chainType: parsed.chainType,
+          walletId: parsed.walletId,
           fileId: backup.id
         });
 

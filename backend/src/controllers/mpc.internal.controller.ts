@@ -63,8 +63,8 @@ export const getWalletShardDataInternal = async (req: Request, res: Response) =>
       orderBy: { lastSyncedAt: 'desc' },
       select: {
         driveFileId: true,
-        backupIv: true,
-        backupTag: true,
+        backupVersion: true,
+        metadataChecksum: true,
         lastSyncedAt: true
       }
     });
