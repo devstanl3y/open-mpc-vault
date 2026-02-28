@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth';
-import { enforcePolicy } from '../middleware/enforcePolicy';
 import {
   createMpcWallet,
   importMpcWallet,
@@ -22,8 +21,8 @@ router.post('/import', requireAuth, importMpcWallet);
 router.post('/import/verify', requireAuth, verifyImportAddress);
 router.post('/derive', requireAuth, deriveAdditionalWallet);
 router.get('/wallets', requireAuth, getMpcWallets);
-router.post('/sign', requireAuth, enforcePolicy, signWithMpcWallet);
-router.post('/sign/session', requireAuth, enforcePolicy, signWithSession);
+router.post('/sign', requireAuth, signWithMpcWallet);
+router.post('/sign/session', requireAuth, signWithSession);
 router.delete('/wallets/:walletId', requireAuth, deleteMpcWallet);
 
 router.post('/recovery/single', requireAuth, recoverFromCloud);

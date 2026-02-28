@@ -8,6 +8,8 @@ use std::str::FromStr;
 #[derive(Debug, Deserialize)]
 struct MpcWallet {
     id: String,
+    #[serde(rename = "userId")]
+    user_id: i64,
     #[serde(rename = "shardAEncrypted")]
     shard_a_encrypted: String,
     #[serde(rename = "shardAIv")]
@@ -67,7 +69,9 @@ impl MpcWalletLoader {
             .await?;
 
         // 3. Fetch and decrypt Shard B
-        let shard_b = self.fetch_and_decrypt_shard_b(&mpc_wallet.shard_b_id).await?;
+        let shard_b = self
+            .fetch_and_decrypt_shard_b(&mpc_wallet.shard_b_id, mpc_wallet.user_id)
+            .await?;
 
         // 4. Reconstruct private key using Shamir Secret Sharing
         let private_key = self.reconstruct_private_key(&shard_a, &shard_b)?;
@@ -134,9 +138,12 @@ impl MpcWalletLoader {
         Ok(shard_bytes)
     }
 
-    async fn fetch_and_decrypt_shard_b(&self, shard_b_id: &str) -> Result<Vec<u8>> {
+    async fn fetch_and_decrypt_shard_b(&self, shard_b_id: &str, user_id: i64) -> Result<Vec<u8>> {
         let client = reqwest::Client::new();
-        let url = format!("{}/api/v1/internal/shard-b/{}", self.api_url, shard_b_id);
+        let url = format!(
+            "{}/api/v1/internal/shard-b/{}?userId={}",
+            self.api_url, shard_b_id, user_id
+        );
 
         let response = client
             .get(&url)

@@ -3,6 +3,8 @@ import crypto from 'crypto';
 export class ShamirSecretSharing {
   private static readonly PRIME =
     BigInt('0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f');
+  private static readonly LEGACY_Y_BYTES = 32;
+  private static readonly EXTENDED_SHARE_BYTES = 34; // x (1) + entropyLength (1) + y (32)
 
   private static modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
     let result = 1n;
@@ -30,6 +32,10 @@ export class ShamirSecretSharing {
   }
 
   static splitSecret(secret: Buffer, threshold: number, p0: number): Buffer[] {
+    if (secret.length < 1 || secret.length > this.LEGACY_Y_BYTES) {
+      throw new Error('Secret length must be between 1 and 32 bytes');
+    }
+
     const secretNum = BigInt('0x' + secret.toString('hex'));
     if (secretNum >= this.PRIME) throw new Error('Secret exceeds field size');
 
@@ -49,8 +55,12 @@ export class ShamirSecretSharing {
         xPow = (xPow * BigInt(x)) % this.PRIME;
       }
       const xByte = Buffer.from([x]);
-      const yBuffer = Buffer.from(y.toString(16).padStart(64, '0'), 'hex');
-      shares.push(Buffer.concat([xByte, yBuffer]));
+      const entropyLengthByte = Buffer.from([secret.length]);
+      const yBuffer = Buffer.from(
+        y.toString(16).padStart(this.LEGACY_Y_BYTES * 2, '0'),
+        'hex'
+      );
+      shares.push(Buffer.concat([xByte, entropyLengthByte, yBuffer]));
     }
 
     return shares;
@@ -59,9 +69,29 @@ export class ShamirSecretSharing {
   static reconstructSecret(shares: Buffer[]): Buffer {
     if (shares.length < 2) throw new Error('At least 2 shares required');
 
+    const hasExtendedFormat = shares.every(
+      (share) => share.length === this.EXTENDED_SHARE_BYTES
+    );
+    const hasLegacyFormat = shares.every(
+      (share) => share.length === this.LEGACY_Y_BYTES + 1
+    );
+
+    if (!hasExtendedFormat && !hasLegacyFormat) {
+      throw new Error('Invalid share format');
+    }
+
+    const entropyLength = hasExtendedFormat ? shares[0][1] : this.LEGACY_Y_BYTES;
+    if (entropyLength < 1 || entropyLength > this.LEGACY_Y_BYTES) {
+      throw new Error('Invalid secret length in share');
+    }
+    if (hasExtendedFormat && !shares.every((share) => share[1] === entropyLength)) {
+      throw new Error('Inconsistent secret lengths across shares');
+    }
+
     const parsed = shares.map((share) => {
       const x = BigInt(share[0]);
-      const y = BigInt('0x' + share.slice(1).toString('hex'));
+      const ySlice = hasExtendedFormat ? share.slice(2) : share.slice(1);
+      const y = BigInt('0x' + ySlice.toString('hex'));
       return { x, y };
     });
 
@@ -85,6 +115,14 @@ export class ShamirSecretSharing {
       secret = (secret + y1 * lagrangeCoefficient) % this.PRIME;
     }
 
-    return Buffer.from(secret.toString(16).padStart(64, '0'), 'hex');
+    const reconstructed = Buffer.from(
+      secret.toString(16).padStart(this.LEGACY_Y_BYTES * 2, '0'),
+      'hex'
+    );
+
+    if (entropyLength === this.LEGACY_Y_BYTES) {
+      return reconstructed;
+    }
+    return reconstructed.slice(this.LEGACY_Y_BYTES - entropyLength);
   }
 }

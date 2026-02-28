@@ -23,6 +23,7 @@ export const getMpcWalletInternal = async (req: Request, res: Response) => {
       where: { id: walletId },
       select: {
         id: true,
+        userId: true,
         walletName: true,
         publicAddress: true,
         curveType: true,
@@ -146,7 +147,45 @@ export const getShardBInternal = async (req: Request, res: Response) => {
   }
 
   try {
-    const shardB = await ShardStorage.retrieveShardB(shardBId);
+    const requireScope = (process.env.REQUIRE_ENGINE_USER_SCOPE_FOR_SHARD_B || 'true').toLowerCase() !== 'false';
+    const userIdParam = req.query.userId;
+    const walletIdParam = req.query.walletId;
+
+    let scopedUserId: number | undefined;
+
+    if (typeof userIdParam === 'string' && /^\d+$/.test(userIdParam)) {
+      const parsed = Number(userIdParam);
+      if (parsed > 0) {
+        scopedUserId = parsed;
+      }
+    } else if (typeof walletIdParam === 'string' && walletIdParam.trim().length > 0) {
+      const wallet = await prisma.mpcWallet.findUnique({
+        where: { id: walletIdParam },
+        select: {
+          userId: true,
+          shardBId: true
+        }
+      });
+
+      if (!wallet) {
+        return res.status(404).json({ message: 'Wallet not found for provided walletId scope' });
+      }
+      if (wallet.shardBId !== shardBId) {
+        return res.status(400).json({ message: 'walletId scope does not match requested shardBId' });
+      }
+
+      scopedUserId = wallet.userId;
+    }
+
+    if (requireScope && !scopedUserId) {
+      return res.status(400).json({
+        message: 'userId or walletId scope is required for shard B retrieval'
+      });
+    }
+
+    const shardB = scopedUserId
+      ? await ShardStorage.retrieveShardBForUser(shardBId, scopedUserId)
+      : await ShardStorage.retrieveShardB(shardBId);
 
     if (!shardB) {
       return res.status(404).json({ message: 'Shard B not found' });
@@ -235,6 +274,7 @@ export const validateShardInternal = async (req: Request, res: Response) => {
     const wallet = await prisma.mpcWallet.findUnique({
       where: { id: walletId },
       select: {
+        userId: true,
         shardBId: true,
         chainType: true,
         accountIndex: true,
@@ -249,7 +289,7 @@ export const validateShardInternal = async (req: Request, res: Response) => {
     }
 
     const shardABuffer = Buffer.from(shardA, 'hex');
-    const shardB = await ShardStorage.retrieveShardB(wallet.shardBId);
+    const shardB = await ShardStorage.retrieveShardBForUser(wallet.shardBId, wallet.userId);
 
     if (!shardB) {
       return res.status(404).json({ message: 'Shard B not found' });

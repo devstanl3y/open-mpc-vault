@@ -5,7 +5,7 @@ import { MpcKeyGenerator } from '../utils/mpc/keyGenerator';
 import { ShardEncryption } from '../utils/mpc/shardEncryption';
 import { ShardStorage } from '../utils/mpc/shardStorage';
 import { SessionKeyManager } from '../utils/sessionKey';
-import { CurveType, ShardStatus, PolicyLogStatus } from '@prisma/client';
+import { CurveType, ShardStatus } from '@prisma/client';
 import { ChainType, HDWalletDerivation } from '../utils/mpc/hdWallet';
 import { SeedPhraseUtils } from '../utils/mpc/seedPhrase';
 import bcrypt from 'bcrypt';
@@ -811,7 +811,7 @@ export const getMpcWallets = async (req: IUserRequest, res: Response) => {
 };
 
 export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
-  const { walletId, messageHash, pin, amountUsd, tokenSymbol, chain, toAddress, contractAddress, shardAEncrypted, shardAIv, shardATag, shardASalt } = req.body;
+  const { walletId, messageHash, pin, shardAEncrypted, shardAIv, shardATag, shardASalt } = req.body;
   const userId = Number(req.user?.id);
   const context = getRequestContext(req);
 
@@ -854,19 +854,6 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
       return res.status(404).json({ message: 'MPC wallet not found' });
     }
 
-    let spendingLog;
-    if (amountUsd && tokenSymbol && chain && toAddress) {
-      spendingLog = await PolicyService.logTransaction(userId, {
-        amount: amountUsd,
-        amountUsd: parseFloat(amountUsd),
-        tokenSymbol,
-        chain,
-        toAddress,
-        contractAddress,
-        status: PolicyLogStatus.APPROVED
-      });
-    }
-
     shardA = ShardEncryption.decryptShardA(
       shardAEncrypted,
       shardAIv,
@@ -880,19 +867,24 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
       return res.status(500).json({ message: 'Shard B not found' });
     }
 
-    if (mpcWallet.isSeedPhrase && mpcWallet.chainType) {
-      const derived = MpcKeyGenerator.deriveWalletFromShards(
-        shardA,
-        shardB,
-        mpcWallet.chainType as ChainType,
-        mpcWallet.accountIndex,
-        mpcWallet.addressIndex,
-        true
-      );
-      privateKey = derived.privateKey;
-    } else {
-      privateKey = MpcKeyGenerator.reconstructEntropy(shardA, shardB);
+    const derivedWallet = deriveWalletFromShardsForMpcWallet({
+      shardA,
+      shardB,
+      wallet: {
+        publicAddress: mpcWallet.publicAddress,
+        chainType: mpcWallet.chainType,
+        curveType: mpcWallet.curveType,
+        isSeedPhrase: mpcWallet.isSeedPhrase,
+        accountIndex: mpcWallet.accountIndex,
+        addressIndex: mpcWallet.addressIndex
+      }
+    });
+
+    if (!addressesEqual(derivedWallet.address, mpcWallet.publicAddress)) {
+      return res.status(403).json({ message: 'Shard payload does not match selected wallet' });
     }
+
+    privateKey = Buffer.from(derivedWallet.privateKey);
 
     let signature: string;
     const messageBuffer = Buffer.from(messageHash.replace('0x', ''), 'hex');
@@ -918,10 +910,7 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
       context
     );
 
-    res.status(200).json({ 
-      signature,
-      spendingLogId: spendingLog?.id
-    });
+    res.status(200).json({ signature });
   } catch (error) {
     console.error('MPC signing error:', error);
     res.status(500).json({ message: 'Failed to sign with MPC wallet' });
@@ -932,7 +921,7 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
 
 export const signWithSession = async (req: IUserRequest, res: Response) => {
 
-  const { messageHash, sessionToken, amountUsd, tokenSymbol, chain, toAddress, contractAddress } = req.body;
+  const { messageHash, sessionToken } = req.body;
   const sessionShard = getSessionShardFromRequestBody(req.body);
   
   const walletId = req.body.walletId || req.body.mpcWalletId;
@@ -981,19 +970,6 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
 
     if (!mpcWallet) {
       return res.status(404).json({ message: 'MPC wallet not found' });
-    }
-
-    let spendingLog;
-    if (amountUsd && tokenSymbol && chain && toAddress) {
-      spendingLog = await PolicyService.logTransaction(userId, {
-        amount: amountUsd,
-        amountUsd: parseFloat(amountUsd),
-        tokenSymbol,
-        chain,
-        toAddress,
-        contractAddress,
-        status: PolicyLogStatus.APPROVED
-      });
     }
 
     shardA = await SessionKeyManager.decryptSessionShard({
@@ -1057,10 +1033,7 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
       context
     );
 
-    res.status(200).json({ 
-      signature,
-      spendingLogId: spendingLog?.id
-    });
+    res.status(200).json({ signature });
   } catch (error) {
     console.error('Session-based MPC signing error:', error);
     res.status(500).json({ message: 'Failed to sign with session' });

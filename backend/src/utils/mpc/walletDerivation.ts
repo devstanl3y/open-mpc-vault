@@ -35,7 +35,8 @@ export function deriveWalletFromShardsForMpcWallet(params: {
     chainType,
     params.wallet.accountIndex,
     params.wallet.addressIndex,
-    params.wallet.isSeedPhrase
+    params.wallet.isSeedPhrase,
+    params.wallet.publicAddress
   );
 }
 

@@ -110,7 +110,8 @@ export class MpcKeyGenerator {
     chainType: ChainType,
     account: number = 0,
     index: number = 0,
-    isSeedPhrase: boolean = true
+    isSeedPhrase: boolean = true,
+    expectedAddress?: string
   ): MpcDerivedWallet {
     const entropy = this.reconstructEntropy(shardA, shardB);
 
@@ -146,28 +147,21 @@ export class MpcKeyGenerator {
       };
     }
 
-    const mnemonic = SeedPhraseUtils.entropyToMnemonic(entropy);
-    const seed = SeedPhraseUtils.mnemonicToSeed(mnemonic);
+    const candidates = this.getSeedEntropyCandidates(shardA, shardB, entropy);
+    const derivedCandidates = candidates.map((candidate) =>
+      this.deriveSeedWalletFromEntropy(candidate, chainType, account, index)
+    );
 
-    let derived: DerivedWallet;
-    switch (chainType) {
-      case ChainType.ETHEREUM:
-        derived = HDWalletDerivation.deriveEthereumWallet(seed, account, index);
-        break;
-      case ChainType.SOLANA:
-        derived = HDWalletDerivation.deriveSolanaWallet(seed, account);
-        break;
-      case ChainType.BITCOIN:
-        derived = HDWalletDerivation.deriveBitcoinWallet(seed, account, index);
-        break;
-      default:
-        throw new Error('Unsupported chain type');
+    if (expectedAddress) {
+      const matched = derivedCandidates.find(
+        (candidate) => candidate.address.toLowerCase() === expectedAddress.toLowerCase()
+      );
+      if (matched) {
+        return matched;
+      }
     }
 
-    return {
-      ...derived,
-      curveType: chainType === ChainType.SOLANA ? CurveType.ED25519 : CurveType.SECP256K1
-    };
+    return derivedCandidates[0];
   }
 
   static async scanUsedAddresses(
@@ -250,5 +244,54 @@ export class MpcKeyGenerator {
     } catch {
       return false;
     }
+  }
+
+  private static deriveSeedWalletFromEntropy(
+    entropy: Buffer,
+    chainType: ChainType,
+    account: number,
+    index: number
+  ): MpcDerivedWallet {
+    const mnemonic = SeedPhraseUtils.entropyToMnemonic(entropy);
+    const seed = SeedPhraseUtils.mnemonicToSeed(mnemonic);
+
+    let derived: DerivedWallet;
+    switch (chainType) {
+      case ChainType.ETHEREUM:
+        derived = HDWalletDerivation.deriveEthereumWallet(seed, account, index);
+        break;
+      case ChainType.SOLANA:
+        derived = HDWalletDerivation.deriveSolanaWallet(seed, account);
+        break;
+      case ChainType.BITCOIN:
+        derived = HDWalletDerivation.deriveBitcoinWallet(seed, account, index);
+        break;
+      default:
+        throw new Error('Unsupported chain type');
+    }
+
+    return {
+      ...derived,
+      curveType: chainType === ChainType.SOLANA ? CurveType.ED25519 : CurveType.SECP256K1
+    };
+  }
+
+  private static getSeedEntropyCandidates(
+    shardA: Buffer,
+    shardB: Buffer,
+    entropy: Buffer
+  ): Buffer[] {
+    const candidates: Buffer[] = [entropy];
+
+    const isLegacyShareFormat = shardA.length === 33 && shardB.length === 33;
+    const hasZeroPaddedPrefix =
+      entropy.length === 32 && entropy.subarray(0, 16).every((byte) => byte === 0);
+
+    // Legacy 12-word imports were encoded as 32-byte values with a zero-padded prefix.
+    if (isLegacyShareFormat && hasZeroPaddedPrefix) {
+      candidates.push(entropy.subarray(16));
+    }
+
+    return candidates;
   }
 }
