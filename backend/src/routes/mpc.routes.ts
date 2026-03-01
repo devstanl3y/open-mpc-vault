@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth';
 import {
+  checkBanStatus,
+  checkUserBanStatus,
+  strictLimiter,
+} from '../middleware/rateLimiter';
+import {
   createMpcWallet,
   importMpcWallet,
   verifyImportAddress,
@@ -16,17 +21,19 @@ import {
 
 const router = Router();
 
-router.post('/create', requireAuth, createMpcWallet);
-router.post('/import', requireAuth, importMpcWallet);
-router.post('/import/verify', requireAuth, verifyImportAddress);
-router.post('/derive', requireAuth, deriveAdditionalWallet);
-router.get('/wallets', requireAuth, getMpcWallets);
-router.post('/sign', requireAuth, signWithMpcWallet);
-router.post('/sign/session', requireAuth, signWithSession);
-router.delete('/wallets/:walletId', requireAuth, deleteMpcWallet);
+router.use(checkBanStatus, requireAuth, checkUserBanStatus);
 
-router.post('/recovery/single', requireAuth, recoverFromCloud);
-router.post('/recovery/all', requireAuth, recoverAllWalletsFromCloud);
-router.get('/recovery/vaults', requireAuth, listRecoverableVaults);
+router.post('/create', createMpcWallet);
+router.post('/import', importMpcWallet);
+router.post('/import/verify', verifyImportAddress);
+router.post('/derive', deriveAdditionalWallet);
+router.get('/wallets', getMpcWallets);
+router.post('/sign', strictLimiter, signWithMpcWallet);
+router.post('/sign/session', strictLimiter, signWithSession);
+router.delete('/wallets/:walletId', deleteMpcWallet);
+
+router.post('/recovery/single', recoverFromCloud);
+router.post('/recovery/all', recoverAllWalletsFromCloud);
+router.get('/recovery/vaults', listRecoverableVaults);
 
 export default router;
