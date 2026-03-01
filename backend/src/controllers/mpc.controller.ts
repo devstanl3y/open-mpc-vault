@@ -1377,6 +1377,7 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
 
   try {
     let allBackups;
+    let skippedLegacyBackupCount = 0;
     
     try {
       allBackups = await cloudBackupService.listBackups(userId);
@@ -1404,6 +1405,11 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
           const backupData = await cloudBackupService.fetchBackup(userId, backup.id);
           parsed = cloudBackupService.parseBackupPayload(backupData);
         } catch (fetchError) {
+          const errorMessage = fetchError instanceof Error ? fetchError.message : 'Unknown parse error';
+          if (/Unsupported backup version/i.test(errorMessage)) {
+            skippedLegacyBackupCount += 1;
+            continue;
+          }
           console.error(`[listRecoverableVaults] Failed to fetch/parse backup ${backup.id}:`, fetchError);
           continue;
         }
@@ -1428,6 +1434,12 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
       } catch (error) {
         console.error(`[listRecoverableVaults] ERROR processing backup:`, error);
       }
+    }
+
+    if (skippedLegacyBackupCount > 0) {
+      console.info(
+        `[listRecoverableVaults] Skipped ${skippedLegacyBackupCount} legacy backup file(s) (unsupported version).`
+      );
     }
 
     const vaults = Array.from(vaultMap.entries()).map(([shardBId, data]) => ({
