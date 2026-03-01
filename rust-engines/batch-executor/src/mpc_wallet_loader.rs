@@ -1,3 +1,4 @@
+use crate::EngineAuth;
 use anyhow::Result;
 use ethers_core::types::Address;
 use ethers_signers::{LocalWallet, Signer};
@@ -38,14 +39,14 @@ struct DecryptShardRequest {
 
 pub struct MpcWalletLoader {
     api_url: String,
-    engine_secret: String,
+    engine_auth: EngineAuth,
 }
 
 impl MpcWalletLoader {
-    pub fn new(api_url: String, engine_secret: String) -> Self {
+    pub fn new(api_url: String, engine_auth: EngineAuth) -> Self {
         Self {
             api_url,
-            engine_secret,
+            engine_auth,
         }
     }
 
@@ -86,11 +87,7 @@ impl MpcWalletLoader {
         let client = reqwest::Client::new();
         let url = format!("{}/api/v1/internal/mpc-wallet/{}", self.api_url, wallet_id);
 
-        let response = client
-            .get(&url)
-            .header("x-engine-secret", &self.engine_secret)
-            .send()
-            .await?;
+        let response = self.engine_auth.apply(client.get(&url))?.send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to fetch MPC wallet"));
@@ -117,9 +114,9 @@ impl MpcWalletLoader {
             pin: pin.to_string(),
         };
 
-        let response = client
-            .post(&url)
-            .header("x-engine-secret", &self.engine_secret)
+        let response = self
+            .engine_auth
+            .apply(client.post(&url))?
             .json(&payload)
             .send()
             .await?;
@@ -145,11 +142,7 @@ impl MpcWalletLoader {
             self.api_url, shard_b_id, user_id
         );
 
-        let response = client
-            .get(&url)
-            .header("x-engine-secret", &self.engine_secret)
-            .send()
-            .await?;
+        let response = self.engine_auth.apply(client.get(&url))?.send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to fetch shard B"));
