@@ -53,6 +53,18 @@ function getRecoveryIdentityMismatch(
   return null;
 }
 
+function getCloudRecoveryErrorStatus(message: string): number {
+  if (/not found|no cloud backup/i.test(message)) {
+    return 404;
+  }
+
+  if (/integrity|checksum|metadata|unsupported|invalid|mismatch|ownership|backup/i.test(message)) {
+    return 400;
+  }
+
+  return 500;
+}
+
 export const createMpcWallet = async (req: IUserRequest, res: Response) => {
   const { walletName, pin } = req.body;
   const userId = Number(req.user?.id);
@@ -611,6 +623,8 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   const requestedWalletId =
     typeof req.body?.mpcWalletId === 'string' && req.body.mpcWalletId.trim().length > 0
       ? req.body.mpcWalletId
+      : typeof req.body?.walletId === 'string' && req.body.walletId.trim().length > 0
+        ? req.body.walletId
       : undefined;
   const userId = Number(req.user?.id);
   const context = getRequestContext(req);
@@ -620,7 +634,7 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
 
   if (!userId) return res.status(401).json({ message: 'Unauthorized' });
   if (!pin || (!requestedFileId && !requestedWalletId)) {
-    return res.status(400).json({ message: 'Missing fileId/mpcWalletId or PIN' });
+    return res.status(400).json({ message: 'Missing fileId/walletId (or mpcWalletId) or PIN' });
   }
 
   try {
@@ -737,6 +751,10 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
 
     return res.status(200).json({
       message: 'Wallet recovered successfully',
+      recovered: true,
+      walletId: mpcWallet.id,
+      publicAddress: mpcWallet.publicAddress,
+      chainType: mpcWallet.chainType,
       wallet: mpcWallet,
       encryptedShardA: {
         encrypted: backupData.encryptedShardA,
@@ -748,13 +766,12 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const isValidationError =
-      /backup|integrity|checksum|metadata|unsupported|invalid|mismatch/i.test(errorMessage);
+    const status = getCloudRecoveryErrorStatus(errorMessage);
 
     console.error('Recovery error:', error);
-    if (isValidationError) {
+    if (status === 400 || status === 404) {
       logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
-      return res.status(400).json({
+      return res.status(status).json({
         message: `Recovery failed: ${errorMessage}`
       });
     }
