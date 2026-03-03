@@ -603,7 +603,15 @@ export const deriveAdditionalWallet = async (req: IUserRequest, res: Response) =
 };
 
 export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
-  const { fileId, pin } = req.body;
+  const pin = typeof req.body?.pin === 'string' ? req.body.pin : '';
+  const requestedFileId =
+    typeof req.body?.fileId === 'string' && req.body.fileId.trim().length > 0
+      ? req.body.fileId
+      : undefined;
+  const requestedWalletId =
+    typeof req.body?.mpcWalletId === 'string' && req.body.mpcWalletId.trim().length > 0
+      ? req.body.mpcWalletId
+      : undefined;
   const userId = Number(req.user?.id);
   const context = getRequestContext(req);
 
@@ -611,7 +619,9 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   let shardB: Buffer | undefined;
 
   if (!userId) return res.status(401).json({ message: 'Unauthorized' });
-  if (!fileId || !pin) return res.status(400).json({ message: 'Missing fileId or PIN' });
+  if (!pin || (!requestedFileId && !requestedWalletId)) {
+    return res.status(400).json({ message: 'Missing fileId/mpcWalletId or PIN' });
+  }
 
   try {
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -619,6 +629,16 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
     
     const pinWithPepper = pin + PIN_PEPPER;
     if (!await bcrypt.compare(pinWithPepper, user.pin_hash)) return res.status(401).json({ message: 'Invalid PIN' });
+
+    const fileId =
+      requestedFileId ||
+      (requestedWalletId
+        ? await cloudBackupService.resolveBackupFileIdForWallet(userId, requestedWalletId)
+        : undefined);
+
+    if (!fileId) {
+      return res.status(404).json({ message: 'No backup file found for recovery' });
+    }
 
     const backupData = await cloudBackupService.validateRecoveryBackup(userId, fileId, pinWithPepper);
 
