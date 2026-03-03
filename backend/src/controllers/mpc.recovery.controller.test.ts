@@ -8,7 +8,6 @@ import { cloudBackupService, type BackupPayloadV4 } from '../utils/cloudBackup';
 import { ShardStorage } from '../utils/mpc/shardStorage';
 import { ShardEncryption } from '../utils/mpc/shardEncryption';
 import { MpcKeyGenerator } from '../utils/mpc/keyGenerator';
-import * as securityLogger from '../utils/securityLogger';
 import { recoverFromCloud } from './mpc.controller';
 
 type MockResponse = {
@@ -113,7 +112,6 @@ test('recoverFromCloud supports walletId alias and recovers wallet', async () =>
   const originalValidateBackup = cloudBackupService.validateRecoveryBackup;
   const originalRetrieveShardB = ShardStorage.retrieveShardBForUser;
   const originalDecryptShardA = ShardEncryption.decryptShardA;
-  const originalLogEvent = securityLogger.logSecurityEvent;
 
   (bcrypt as any).compare = async () => true;
   (prisma.user as any).findUnique = async () => ({ id: 11, pin_hash: 'hash' });
@@ -139,7 +137,6 @@ test('recoverFromCloud supports walletId alias and recovers wallet', async () =>
   (cloudBackupService as any).validateRecoveryBackup = async () => backupData;
   (ShardStorage as any).retrieveShardBForUser = async () => Buffer.from(seed.shardB);
   (ShardEncryption as any).decryptShardA = () => Buffer.from(seed.shardA);
-  (securityLogger as any).logSecurityEvent = async () => undefined;
 
   try {
     const req = {
@@ -168,6 +165,5 @@ test('recoverFromCloud supports walletId alias and recovers wallet', async () =>
     (cloudBackupService as any).validateRecoveryBackup = originalValidateBackup;
     (ShardStorage as any).retrieveShardBForUser = originalRetrieveShardB;
     (ShardEncryption as any).decryptShardA = originalDecryptShardA;
-    (securityLogger as any).logSecurityEvent = originalLogEvent;
   }
 });
