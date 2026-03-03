@@ -4,12 +4,9 @@ import { ShardEncryption } from '../utils/mpc/shardEncryption';
 import { ShardStorage } from '../utils/mpc/shardStorage';
 import { MpcKeyGenerator } from '../utils/mpc/keyGenerator';
 import { ChainType } from '@prisma/client';
+import { PIN_PEPPER_SECRET } from '../config/env';
 
-const PIN_PEPPER = process.env.PIN_PEPPER_SECRET;
-
-if (!PIN_PEPPER) {
-  throw new Error('FATAL: PIN_PEPPER_SECRET must be set in environment variables');
-}
+const PIN_PEPPER = PIN_PEPPER_SECRET;
 
 export const getMpcWalletInternal = async (req: Request, res: Response) => {
   const { walletId } = req.params;

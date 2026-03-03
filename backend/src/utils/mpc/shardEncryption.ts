@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import { MPC_SERVER_SECRET } from '../../config/env';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -87,8 +88,7 @@ export class ShardEncryption {
   }
 
   static encryptShardB(shard: Buffer): string {
-    const serverSecret = process.env.MPC_SERVER_SECRET || crypto.randomBytes(32).toString('hex');
-    const key = crypto.scryptSync(serverSecret, 'vera-mpc-salt', 32);
+    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'vera-mpc-salt', 32);
     const iv = crypto.randomBytes(IV_LENGTH);
     
     const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -99,8 +99,7 @@ export class ShardEncryption {
   }
 
   static decryptShardB(encryptedHex: string): Buffer {
-    const serverSecret = process.env.MPC_SERVER_SECRET || crypto.randomBytes(32).toString('hex');
-    const key = crypto.scryptSync(serverSecret, 'vera-mpc-salt', 32);
+    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'vera-mpc-salt', 32);
     
     const combined = Buffer.from(encryptedHex, 'hex');
     const iv = combined.slice(0, IV_LENGTH);

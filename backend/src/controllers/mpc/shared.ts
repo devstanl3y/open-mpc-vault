@@ -2,8 +2,9 @@ import { CurveType } from '@prisma/client';
 import { ChainType } from '../../utils/mpc/hdWallet';
 import type { BackupPayloadV4 } from '../../utils/cloudBackup';
 import { addressesEqual } from '../../utils/mpc/walletDerivation';
+import { PIN_PEPPER_SECRET } from '../../config/env';
 
-export const PIN_PEPPER = process.env.PIN_PEPPER_SECRET || '';
+export const PIN_PEPPER = PIN_PEPPER_SECRET;
 
 export function zeroizeBuffers(...buffers: Array<Buffer | undefined>): void {
   buffers.forEach((buffer) => {
