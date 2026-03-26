@@ -1,6 +1,10 @@
 import { Response } from 'express';
 import bcrypt from 'bcrypt';
-import { ShardStatus, UserSecurityEventType } from '@prisma/client';
+import {
+  AdminKillSwitchFeature,
+  ShardStatus,
+  UserSecurityEventType,
+} from '@prisma/client';
 import type { IUserRequest } from '../../middleware/requireAuth';
 import prisma from '../../utils/prisma';
 import { ShardEncryption } from '../../utils/mpc/shardEncryption';
@@ -10,6 +14,7 @@ import { cloudBackupService, type BackupPayloadV4 } from '../../utils/cloudBacku
 import { logSecurityEvent } from '../../utils/securityLogger';
 import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../../utils/mpc/walletDerivation';
 import { ChainType } from '../../utils/mpc/hdWallet';
+import { getKillSwitchMatch } from '../../services/adminKillSwitches.service';
 import {
   PIN_PEPPER,
   getCloudRecoveryErrorStatus,
@@ -38,6 +43,19 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   if (!userId) return res.status(401).json({ message: 'Unauthorized' });
   if (!pin || (!requestedFileId && !requestedWalletId)) {
     return res.status(400).json({ message: 'Missing fileId/walletId (or mpcWalletId) or PIN' });
+  }
+
+  const killSwitch = await getKillSwitchMatch({
+    feature: AdminKillSwitchFeature.CLOUD_BACKUP,
+  });
+  if (killSwitch.active && killSwitch.killSwitch) {
+    return res.status(503).json({
+      message: 'CLOUD_BACKUP is temporarily paused.',
+      code: 'FEATURE_PAUSED',
+      feature: AdminKillSwitchFeature.CLOUD_BACKUP,
+      reason: killSwitch.killSwitch.reason,
+      blastRadiusLabel: killSwitch.killSwitch.blastRadiusLabel,
+    });
   }
 
   try {
@@ -193,6 +211,19 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
 
   if (!userId) return res.status(401).json({ message: 'Unauthorized' });
   if (!pin) return res.status(400).json({ message: 'PIN is required' });
+
+  const killSwitch = await getKillSwitchMatch({
+    feature: AdminKillSwitchFeature.CLOUD_BACKUP,
+  });
+  if (killSwitch.active && killSwitch.killSwitch) {
+    return res.status(503).json({
+      message: 'CLOUD_BACKUP is temporarily paused.',
+      code: 'FEATURE_PAUSED',
+      feature: AdminKillSwitchFeature.CLOUD_BACKUP,
+      reason: killSwitch.killSwitch.reason,
+      blastRadiusLabel: killSwitch.killSwitch.blastRadiusLabel,
+    });
+  }
 
   try {
     const user = await prisma.user.findUnique({ where: { id: userId } });
