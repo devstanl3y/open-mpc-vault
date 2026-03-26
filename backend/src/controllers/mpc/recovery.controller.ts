@@ -14,7 +14,7 @@ import { cloudBackupService, type BackupPayloadV4 } from '../../utils/cloudBacku
 import { logSecurityEvent } from '../../utils/securityLogger';
 import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../../utils/mpc/walletDerivation';
 import { ChainType } from '../../utils/mpc/hdWallet';
-import { getKillSwitchMatch } from '../../services/adminKillSwitches.service';
+import { getKillSwitchMatch } from '../../modules/admin/kill-switches/adminKillSwitches.service';
 import {
   PIN_PEPPER,
   getCloudRecoveryErrorStatus,
