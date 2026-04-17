@@ -88,7 +88,7 @@ export class ShardEncryption {
   }
 
   static encryptShardB(shard: Buffer): string {
-    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'vera-mpc-salt', 32);
+    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'maren-mpc-salt', 32);
     const iv = crypto.randomBytes(IV_LENGTH);
     
     const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -99,7 +99,7 @@ export class ShardEncryption {
   }
 
   static decryptShardB(encryptedHex: string): Buffer {
-    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'vera-mpc-salt', 32);
+    const key = crypto.scryptSync(MPC_SERVER_SECRET, 'maren-mpc-salt', 32);
     
     const combined = Buffer.from(encryptedHex, 'hex');
     const iv = combined.slice(0, IV_LENGTH);
