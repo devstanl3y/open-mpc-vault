@@ -1,37 +1,45 @@
-import { Response } from 'express';
-import bcrypt from 'bcrypt';
+import { Response } from "express";
+import bcrypt from "bcrypt";
 import {
   AdminKillSwitchFeature,
   ShardStatus,
   UserSecurityEventType,
-} from '@prisma/client';
-import type { IUserRequest } from '../../middleware/requireAuth';
-import prisma from '../../utils/prisma';
-import { ShardEncryption } from '../../utils/mpc/shardEncryption';
-import { ShardStorage } from '../../utils/mpc/shardStorage';
-import { getRequestContext } from '../../utils/context';
-import { cloudBackupService, type BackupPayloadV4 } from '../../utils/cloudBackup';
-import { logSecurityEvent } from '../../utils/securityLogger';
-import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../../utils/mpc/walletDerivation';
-import { ChainType } from '../../utils/mpc/hdWallet';
-import { getKillSwitchMatch } from '../../modules/admin/kill-switches/adminKillSwitches.service';
+} from "@prisma/client";
+import type { IUserRequest } from "../../middleware/requireAuth";
+import prisma from "../../utils/prisma";
+import { ShardEncryption } from "../../utils/mpc/shardEncryption";
+import { ShardStorage } from "../../utils/mpc/shardStorage";
+import { getRequestContext } from "../../utils/context";
+import {
+  cloudBackupService,
+  type BackupPayloadV4,
+} from "../../utils/cloudBackup";
+import { logSecurityEvent } from "../../utils/securityLogger";
+import {
+  addressesEqual,
+  deriveWalletFromShardsForMpcWallet,
+} from "../../utils/mpc/walletDerivation";
+import { ChainType } from "../../utils/mpc/hdWallet";
+import { getKillSwitchMatch } from "../../modules/admin/kill-switches/adminKillSwitches.service";
 import {
   PIN_PEPPER,
   getCloudRecoveryErrorStatus,
   getRecoveryIdentityMismatch,
   zeroizeBuffers,
-} from './shared';
+} from "./shared";
 
 export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
-  const pin = typeof req.body?.pin === 'string' ? req.body.pin : '';
+  const pin = typeof req.body?.pin === "string" ? req.body.pin : "";
   const requestedFileId =
-    typeof req.body?.fileId === 'string' && req.body.fileId.trim().length > 0
+    typeof req.body?.fileId === "string" && req.body.fileId.trim().length > 0
       ? req.body.fileId
       : undefined;
   const requestedWalletId =
-    typeof req.body?.mpcWalletId === 'string' && req.body.mpcWalletId.trim().length > 0
+    typeof req.body?.mpcWalletId === "string" &&
+    req.body.mpcWalletId.trim().length > 0
       ? req.body.mpcWalletId
-      : typeof req.body?.walletId === 'string' && req.body.walletId.trim().length > 0
+      : typeof req.body?.walletId === "string" &&
+          req.body.walletId.trim().length > 0
         ? req.body.walletId
         : undefined;
   const userId = Number(req.user?.id);
@@ -40,9 +48,11 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   let shardA: Buffer | undefined;
   let shardB: Buffer | undefined;
 
-  if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+  if (!userId) return res.status(401).json({ message: "Unauthorized" });
   if (!pin || (!requestedFileId && !requestedWalletId)) {
-    return res.status(400).json({ message: 'Missing fileId/walletId (or mpcWalletId) or PIN' });
+    return res
+      .status(400)
+      .json({ message: "Missing fileId/walletId (or mpcWalletId) or PIN" });
   }
 
   const killSwitch = await getKillSwitchMatch({
@@ -50,8 +60,8 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   });
   if (killSwitch.active && killSwitch.killSwitch) {
     return res.status(503).json({
-      message: 'CLOUD_BACKUP is temporarily paused.',
-      code: 'FEATURE_PAUSED',
+      message: "CLOUD_BACKUP is temporarily paused.",
+      code: "FEATURE_PAUSED",
       feature: AdminKillSwitchFeature.CLOUD_BACKUP,
       reason: killSwitch.killSwitch.reason,
       blastRadiusLabel: killSwitch.killSwitch.blastRadiusLabel,
@@ -60,29 +70,43 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
 
   try {
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.pin_hash) return res.status(401).json({ message: 'User PIN not set' });
+    if (!user || !user.pin_hash)
+      return res.status(401).json({ message: "User PIN not set" });
 
     const pinWithPepper = pin + PIN_PEPPER;
     if (!(await bcrypt.compare(pinWithPepper, user.pin_hash))) {
-      return res.status(401).json({ message: 'Invalid PIN' });
+      return res.status(401).json({ message: "Invalid PIN" });
     }
 
     const fileId =
       requestedFileId ||
       (requestedWalletId
-        ? await cloudBackupService.resolveBackupFileIdForWallet(userId, requestedWalletId)
+        ? await cloudBackupService.resolveBackupFileIdForWallet(
+            userId,
+            requestedWalletId,
+          )
         : undefined);
 
     if (!fileId) {
-      return res.status(404).json({ message: 'No backup file found for recovery' });
+      return res
+        .status(404)
+        .json({ message: "No backup file found for recovery" });
     }
 
-    const backupData = await cloudBackupService.validateRecoveryBackup(userId, fileId, pinWithPepper);
+    const backupData = await cloudBackupService.validateRecoveryBackup(
+      userId,
+      fileId,
+      pinWithPepper,
+    );
 
-    shardB = await ShardStorage.retrieveShardBForUser(backupData.shardBId, userId);
+    shardB = await ShardStorage.retrieveShardBForUser(
+      backupData.shardBId,
+      userId,
+    );
     if (!shardB) {
       return res.status(400).json({
-        message: 'Critical: The server-side key for this wallet is missing. Recovery impossible.',
+        message:
+          "Critical: The server-side key for this wallet is missing. Recovery impossible.",
       });
     }
 
@@ -108,9 +132,13 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
     });
 
     if (!addressesEqual(derived.address, backupData.publicAddress)) {
-      logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+      logSecurityEvent(
+        userId,
+        UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+        context,
+      );
       return res.status(400).json({
-        message: 'Recovery failed: Backup identity mismatch',
+        message: "Recovery failed: Backup identity mismatch",
       });
     }
 
@@ -130,15 +158,24 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
     });
 
     if (existingWallet) {
-      const mismatch = getRecoveryIdentityMismatch(existingWallet, backupData, userId);
+      const mismatch = getRecoveryIdentityMismatch(
+        existingWallet,
+        backupData,
+        userId,
+      );
       if (mismatch) {
-        console.error('Recovery identity mismatch:', {
+        console.error("Recovery identity mismatch:", {
           walletId: backupData.walletId,
           mismatch,
         });
-        logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+        logSecurityEvent(
+          userId,
+          UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+          context,
+        );
         return res.status(409).json({
-          message: 'Recovery rejected: Existing wallet identity does not match backup',
+          message:
+            "Recovery rejected: Existing wallet identity does not match backup",
         });
       }
     }
@@ -170,10 +207,14 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       data: { mpc_enabled: true },
     });
 
-    logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_SUCCESS, context);
+    logSecurityEvent(
+      userId,
+      UserSecurityEventType.CLOUD_RECOVERY_SUCCESS,
+      context,
+    );
 
     return res.status(200).json({
-      message: 'Wallet recovered successfully',
+      message: "Wallet recovered successfully",
       recovered: true,
       walletId: mpcWallet.id,
       publicAddress: mpcWallet.publicAddress,
@@ -187,38 +228,50 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       },
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     const status = getCloudRecoveryErrorStatus(errorMessage);
 
-    console.error('Recovery error:', error);
+    console.error("Recovery error:", error);
     if (status === 400 || status === 404) {
-      logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+      logSecurityEvent(
+        userId,
+        UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+        context,
+      );
       return res.status(status).json({
         message: `Recovery failed: ${errorMessage}`,
       });
     }
-    logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
-    res.status(500).json({ message: 'Failed to recover from cloud' });
+    logSecurityEvent(
+      userId,
+      UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+      context,
+    );
+    res.status(500).json({ message: "Failed to recover from cloud" });
   } finally {
     zeroizeBuffers(shardA, shardB);
   }
 };
 
-export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Response) => {
+export const recoverAllWalletsFromCloud = async (
+  req: IUserRequest,
+  res: Response,
+) => {
   const { pin } = req.body;
   const userId = Number(req.user?.id);
   const context = getRequestContext(req);
 
-  if (!userId) return res.status(401).json({ message: 'Unauthorized' });
-  if (!pin) return res.status(400).json({ message: 'PIN is required' });
+  if (!userId) return res.status(401).json({ message: "Unauthorized" });
+  if (!pin) return res.status(400).json({ message: "PIN is required" });
 
   const killSwitch = await getKillSwitchMatch({
     feature: AdminKillSwitchFeature.CLOUD_BACKUP,
   });
   if (killSwitch.active && killSwitch.killSwitch) {
     return res.status(503).json({
-      message: 'CLOUD_BACKUP is temporarily paused.',
-      code: 'FEATURE_PAUSED',
+      message: "CLOUD_BACKUP is temporarily paused.",
+      code: "FEATURE_PAUSED",
       feature: AdminKillSwitchFeature.CLOUD_BACKUP,
       reason: killSwitch.killSwitch.reason,
       blastRadiusLabel: killSwitch.killSwitch.blastRadiusLabel,
@@ -227,26 +280,34 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
 
   try {
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.pin_hash) return res.status(401).json({ message: 'User PIN not set' });
+    if (!user || !user.pin_hash)
+      return res.status(401).json({ message: "User PIN not set" });
 
     const pinWithPepper = pin + PIN_PEPPER;
     if (!(await bcrypt.compare(pinWithPepper, user.pin_hash))) {
-      return res.status(401).json({ message: 'Invalid PIN' });
+      return res.status(401).json({ message: "Invalid PIN" });
     }
 
     const allBackups = await cloudBackupService.listBackups(userId);
 
     if (!allBackups || allBackups.length === 0) {
-      return res.status(404).json({ message: 'No backups found in cloud' });
+      return res.status(404).json({ message: "No backups found in cloud" });
     }
 
-    const backupsByVault = new Map<string, Array<BackupPayloadV4 & { fileId: string }>>();
+    const backupsByVault = new Map<
+      string,
+      Array<BackupPayloadV4 & { fileId: string }>
+    >();
     const allErrors: Array<Record<string, string>> = [];
 
     for (const backup of allBackups) {
       try {
         if (!backup.id) continue;
-        const backupData = await cloudBackupService.validateRecoveryBackup(userId, backup.id, pinWithPepper);
+        const backupData = await cloudBackupService.validateRecoveryBackup(
+          userId,
+          backup.id,
+          pinWithPepper,
+        );
 
         if (!backupsByVault.has(backupData.shardBId)) {
           backupsByVault.set(backupData.shardBId, []);
@@ -257,9 +318,10 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
           ...backupData,
         });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
         allErrors.push({
-          fileId: backup.id || 'unknown',
+          fileId: backup.id || "unknown",
           error: errorMessage,
         });
       }
@@ -267,7 +329,8 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
 
     if (backupsByVault.size === 0) {
       return res.status(404).json({
-        message: 'No valid backups found. Ensure backups use the latest format.',
+        message:
+          "No valid backups found. Ensure backups use the latest format.",
         errors: allErrors.length > 0 ? allErrors : undefined,
       });
     }
@@ -284,7 +347,7 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
         if (!shardB) {
           allErrors.push({
             vaultId: shardBId,
-            error: 'Server-side key missing',
+            error: "Server-side key missing",
           });
           continue;
         }
@@ -316,7 +379,7 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
               allErrors.push({
                 chainType: backupData.chainType,
                 walletId: backupData.walletId,
-                error: 'backup identity mismatch',
+                error: "backup identity mismatch",
               });
               continue;
             }
@@ -337,7 +400,11 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
             });
 
             if (existingWallet) {
-              const mismatch = getRecoveryIdentityMismatch(existingWallet, backupData, userId);
+              const mismatch = getRecoveryIdentityMismatch(
+                existingWallet,
+                backupData,
+                userId,
+              );
               if (mismatch) {
                 allErrors.push({
                   chainType: backupData.chainType,
@@ -384,11 +451,14 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
 
             zeroizeBuffers(shardA);
           } catch (walletError) {
-            console.error('Failed to recover wallet:', walletError);
+            console.error("Failed to recover wallet:", walletError);
             allErrors.push({
               chainType: backupData.chainType,
               walletId: backupData.walletId,
-              error: walletError instanceof Error ? walletError.message : 'Unknown error',
+              error:
+                walletError instanceof Error
+                  ? walletError.message
+                  : "Unknown error",
             });
           }
         }
@@ -396,7 +466,8 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
         console.error(`Failed to process vault ${shardBId}:`, vaultError);
         allErrors.push({
           vaultId: shardBId,
-          error: vaultError instanceof Error ? vaultError.message : 'Unknown error',
+          error:
+            vaultError instanceof Error ? vaultError.message : "Unknown error",
         });
       } finally {
         zeroizeBuffers(shardA, shardB);
@@ -404,9 +475,13 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
     }
 
     if (allRecoveredWallets.length === 0) {
-      logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
+      logSecurityEvent(
+        userId,
+        UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+        context,
+      );
       return res.status(500).json({
-        message: 'Failed to recover any wallets',
+        message: "Failed to recover any wallets",
         errors: allErrors,
       });
     }
@@ -416,7 +491,11 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
       data: { mpc_enabled: true },
     });
 
-    logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_SUCCESS, context);
+    logSecurityEvent(
+      userId,
+      UserSecurityEventType.CLOUD_RECOVERY_SUCCESS,
+      context,
+    );
 
     return res.status(200).json({
       message: `Successfully recovered ${allRecoveredWallets.length} wallet(s)`,
@@ -425,16 +504,23 @@ export const recoverAllWalletsFromCloud = async (req: IUserRequest, res: Respons
       errors: allErrors.length > 0 ? allErrors : undefined,
     });
   } catch (error) {
-    console.error('Recovery error:', error);
-    logSecurityEvent(userId, UserSecurityEventType.CLOUD_RECOVERY_FAILED, context);
-    res.status(500).json({ message: 'Failed to recover from cloud' });
+    console.error("Recovery error:", error);
+    logSecurityEvent(
+      userId,
+      UserSecurityEventType.CLOUD_RECOVERY_FAILED,
+      context,
+    );
+    res.status(500).json({ message: "Failed to recover from cloud" });
   }
 };
 
-export const listRecoverableVaults = async (req: IUserRequest, res: Response) => {
+export const listRecoverableVaults = async (
+  req: IUserRequest,
+  res: Response,
+) => {
   const userId = Number(req.user?.id);
 
-  if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+  if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
   try {
     let allBackups;
@@ -443,7 +529,10 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
     try {
       allBackups = await cloudBackupService.listBackups(userId);
     } catch (backupError) {
-      console.error('[listRecoverableVaults] ERROR fetching backups:', backupError);
+      console.error(
+        "[listRecoverableVaults] ERROR fetching backups:",
+        backupError,
+      );
       return res.status(200).json({ vaults: [] });
     }
 
@@ -455,7 +544,11 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
       string,
       {
         shardBId: string;
-        wallets: Array<{ chainType: ChainType; walletId: string; fileId: string }>;
+        wallets: Array<{
+          chainType: ChainType;
+          walletId: string;
+          fileId: string;
+        }>;
         createdAt: Date;
       }
     >();
@@ -466,16 +559,24 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
 
         let parsed: BackupPayloadV4;
         try {
-          const backupData = await cloudBackupService.fetchBackup(userId, backup.id);
+          const backupData = await cloudBackupService.fetchBackup(
+            userId,
+            backup.id,
+          );
           parsed = cloudBackupService.parseBackupPayload(backupData);
         } catch (fetchError) {
           const errorMessage =
-            fetchError instanceof Error ? fetchError.message : 'Unknown parse error';
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unknown parse error";
           if (/Unsupported backup version/i.test(errorMessage)) {
             skippedLegacyBackupCount += 1;
             continue;
           }
-          console.error(`[listRecoverableVaults] Failed to fetch/parse backup ${backup.id}:`, fetchError);
+          console.error(
+            `[listRecoverableVaults] Failed to fetch/parse backup ${backup.id}:`,
+            fetchError,
+          );
           continue;
         }
 
@@ -485,7 +586,9 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
           vaultMap.set(shardBId, {
             shardBId,
             wallets: [],
-            createdAt: new Date(parsed.timestamp || backup.createdTime || Date.now()),
+            createdAt: new Date(
+              parsed.timestamp || backup.createdTime || Date.now(),
+            ),
           });
         }
 
@@ -496,7 +599,10 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
           fileId: backup.id,
         });
       } catch (error) {
-        console.error('[listRecoverableVaults] ERROR processing backup:', error);
+        console.error(
+          "[listRecoverableVaults] ERROR processing backup:",
+          error,
+        );
       }
     }
 
@@ -515,10 +621,10 @@ export const listRecoverableVaults = async (req: IUserRequest, res: Response) =>
 
     return res.status(200).json({ vaults });
   } catch (error) {
-    console.error('[listRecoverableVaults] CRITICAL ERROR:', error);
+    console.error("[listRecoverableVaults] CRITICAL ERROR:", error);
     return res.status(500).json({
-      message: 'Failed to list recoverable vaults',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      message: "Failed to list recoverable vaults",
+      error: error instanceof Error ? error.message : "Unknown error",
     });
   }
 };
