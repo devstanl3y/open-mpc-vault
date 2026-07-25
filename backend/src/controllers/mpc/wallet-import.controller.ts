@@ -13,6 +13,7 @@ import { getRequestContext } from '../../utils/context';
 import { cloudBackupService } from '../../utils/cloudBackup';
 import { PolicyService } from '../../utils/policyService';
 import { PIN_PEPPER, zeroizeBuffers } from './shared';
+import { logger } from '../../utils/logger';
 
 export const importMpcWallet = async (req: IUserRequest, res: Response) => {
   const { walletName, pin, importType, importData, chainType, indices } = req.body;
@@ -157,7 +158,12 @@ export const importMpcWallet = async (req: IUserRequest, res: Response) => {
         message: 'Wallets imported successfully.',
       });
     } catch (innerError) {
-      console.error('Import error during wallet creation:', innerError);
+      logger.error('mpc.wallet_import.wallet_creation_failed', {
+        userId,
+        importType,
+        chainType,
+        err: innerError,
+      });
 
       for (const walletId of createdWalletIds) {
         await prisma.mpcWallet.delete({ where: { id: walletId } }).catch(() => {});
@@ -168,7 +174,13 @@ export const importMpcWallet = async (req: IUserRequest, res: Response) => {
       throw innerError;
     }
   } catch (error) {
-    console.error('Import error:', error);
+    logger.error('mpc.wallet_import.failed', {
+      userId,
+      importType,
+      chainType,
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to import wallet' });
   }
 };
@@ -252,7 +264,12 @@ export const verifyImportAddress = async (req: IUserRequest, res: Response) => {
       message: 'Verified successfully.',
     });
   } catch (error) {
-    console.error('Verification error:', error);
+    logger.error('mpc.wallet_import.verify_address_failed', {
+      userId,
+      importType,
+      chainType,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to verify import' });
   }
 };

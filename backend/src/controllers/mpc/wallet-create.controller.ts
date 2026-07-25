@@ -12,6 +12,7 @@ import { getRequestContext } from '../../utils/context';
 import { cloudBackupService } from '../../utils/cloudBackup';
 import { PolicyService } from '../../utils/policyService';
 import { PIN_PEPPER, zeroizeBuffers } from './shared';
+import { logger } from '../../utils/logger';
 
 export const createMpcWallet = async (req: IUserRequest, res: Response) => {
   const { walletName, pin } = req.body;
@@ -153,7 +154,10 @@ export const createMpcWallet = async (req: IUserRequest, res: Response) => {
         message: 'Vault created successfully. Your keys are secured with MPC and backed up to cloud.',
       });
     } catch (error) {
-      console.error('Failed to create wallets:', error);
+      logger.error('mpc.wallet_create.wallets_failed', {
+        userId,
+        err: error,
+      });
 
       for (const walletId of createdWalletIds) {
         await prisma.mpcWallet.delete({ where: { id: walletId } }).catch(() => {});
@@ -164,7 +168,11 @@ export const createMpcWallet = async (req: IUserRequest, res: Response) => {
       throw error;
     }
   } catch (error) {
-    console.error('MPC wallet creation error:', error);
+    logger.error('mpc.wallet_create.failed', {
+      userId,
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to create MPC wallets' });
   }
 };

@@ -6,6 +6,7 @@ import { cloudBackupService } from '../../utils/cloudBackup';
 import { ShardStorage } from '../../utils/mpc/shardStorage';
 import { SessionKeyManager } from '../../utils/sessionKey';
 import { PIN_PEPPER } from './shared';
+import { logger } from '../../utils/logger';
 
 export const deleteMpcWallet = async (req: IUserRequest, res: Response) => {
   const { walletId } = req.params;
@@ -73,7 +74,12 @@ export const deleteMpcWallet = async (req: IUserRequest, res: Response) => {
 
     res.status(200).json({ message: 'MPC wallet deleted successfully' });
   } catch (error) {
-    console.error('Error deleting MPC wallet:', error);
+    logger.error('mpc.wallet_delete.failed', {
+      userId,
+      walletId,
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to delete MPC wallet' });
   }
 };

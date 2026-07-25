@@ -11,6 +11,7 @@ import { getRequestContext } from '../../utils/context';
 import { addressesEqual, deriveWalletFromShardsForMpcWallet } from '../../utils/mpc/walletDerivation';
 import { getSessionShardFromRequestBody } from '../../utils/sessionShard';
 import { PIN_PEPPER, zeroizeBuffers } from './shared';
+import { logger } from '../../utils/logger';
 
 export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
   const { walletId, messageHash, pin, shardAEncrypted, shardAIv, shardATag, shardASalt } = req.body;
@@ -110,7 +111,11 @@ export const signWithMpcWallet = async (req: IUserRequest, res: Response) => {
 
     res.status(200).json({ signature });
   } catch (error) {
-    console.error('MPC signing error:', error);
+    logger.error('mpc.signing.failed', {
+      userId,
+      walletId,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to sign with MPC wallet' });
   } finally {
     zeroizeBuffers(shardA, shardB, privateKey);
@@ -223,7 +228,11 @@ export const signWithSession = async (req: IUserRequest, res: Response) => {
 
     res.status(200).json({ signature });
   } catch (error) {
-    console.error('Session-based MPC signing error:', error);
+    logger.error('mpc.signing.session_failed', {
+      userId,
+      walletId,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to sign with session' });
   } finally {
     zeroizeBuffers(shardA, shardB, privateKey);

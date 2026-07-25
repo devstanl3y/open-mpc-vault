@@ -5,6 +5,7 @@ import { ShardStorage } from '../utils/mpc/shardStorage';
 import { MpcKeyGenerator } from '../utils/mpc/keyGenerator';
 import { ChainType } from '@prisma/client';
 import { PIN_PEPPER_SECRET } from '../config/env';
+import { logger } from '../utils/logger';
 
 const PIN_PEPPER = PIN_PEPPER_SECRET;
 
@@ -43,7 +44,7 @@ export const getMpcWalletInternal = async (req: Request, res: Response) => {
 
     res.status(200).json(wallet);
   } catch (error) {
-    console.error('Error fetching MPC wallet:', error);
+    logger.error('mpc_internal.wallet.fetch_failed', { walletId, err: error });
     res.status(500).json({ message: 'Failed to fetch MPC wallet' });
   }
 };
@@ -73,7 +74,10 @@ export const getWalletShardDataInternal = async (req: Request, res: Response) =>
 
     res.status(200).json(backup);
   } catch (error) {
-    console.error('Error fetching wallet shard data:', error);
+    logger.error('mpc_internal.wallet_shard_data.fetch_failed', {
+      walletId,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to fetch shard data' });
   }
 };
@@ -109,7 +113,10 @@ export const decryptShardAInternal = async (req: Request, res: Response) => {
       length: decryptedShard.length
     });
   } catch (error) {
-    console.error('Error decrypting shard A:', error);
+    logger.error('mpc_internal.shard_a.decrypt_failed', {
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to decrypt shard A' });
   }
 };
@@ -131,7 +138,10 @@ export const encryptShardAInternal = async (req: Request, res: Response) => {
 
     res.status(200).json(encrypted);
   } catch (error) {
-    console.error('Error encrypting shard A:', error);
+    logger.error('mpc_internal.shard_a.encrypt_failed', {
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to encrypt shard A' });
   }
 };
@@ -193,7 +203,10 @@ export const getShardBInternal = async (req: Request, res: Response) => {
       length: shardB.length
     });
   } catch (error) {
-    console.error('Error fetching shard B:', error);
+    logger.error('mpc_internal.shard_b.fetch_failed', {
+      shardBId,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to fetch shard B' });
   }
 };
@@ -218,7 +231,7 @@ export const reconstructKeyInternal = async (req: Request, res: Response) => {
       length: entropy.length
     });
   } catch (error) {
-    console.error('Error reconstructing entropy:', error);
+    logger.error('mpc_internal.entropy.reconstruct_failed', { err: error });
     res.status(500).json({ message: 'Failed to reconstruct entropy' });
   }
 };
@@ -253,7 +266,12 @@ export const deriveAddressInternal = async (req: Request, res: Response) => {
       derivationPath: derived.derivationPath
     });
   } catch (error) {
-    console.error('Error deriving address:', error);
+    logger.error('mpc_internal.address.derive_failed', {
+      chainType,
+      accountIndex,
+      addressIndex,
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to derive address' });
   }
 };
@@ -309,7 +327,11 @@ export const validateShardInternal = async (req: Request, res: Response) => {
       derivedAddress: derived.address
     });
   } catch (error) {
-    console.error('Error validating shard:', error);
+    logger.error('mpc_internal.shard.validate_failed', {
+      walletId,
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to validate shard' });
   }
 };
@@ -333,7 +355,7 @@ export const healthCheckInternal = async (req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Health check failed:', error);
+    logger.error('mpc_internal.health_check.failed', { err: error });
     res.status(500).json({
       status: 'unhealthy',
       error: error instanceof Error ? error.message : 'Unknown error',
