@@ -27,6 +27,7 @@ import {
   getRecoveryIdentityMismatch,
   zeroizeBuffers,
 } from "./shared";
+import { logger } from "../../utils/logger";
 
 export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
   const pin = typeof req.body?.pin === "string" ? req.body.pin : "";
@@ -164,7 +165,8 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
         userId,
       );
       if (mismatch) {
-        console.error("Recovery identity mismatch:", {
+        logger.warn("mpc.recovery.identity_mismatch", {
+          userId,
           walletId: backupData.walletId,
           mismatch,
         });
@@ -232,7 +234,10 @@ export const recoverFromCloud = async (req: IUserRequest, res: Response) => {
       error instanceof Error ? error.message : "Unknown error";
     const status = getCloudRecoveryErrorStatus(errorMessage);
 
-    console.error("Recovery error:", error);
+    logger.error("mpc.recovery.failed", {
+      userId,
+      err: error,
+    });
     if (status === 400 || status === 404) {
       logSecurityEvent(
         userId,
@@ -451,7 +456,12 @@ export const recoverAllWalletsFromCloud = async (
 
             zeroizeBuffers(shardA);
           } catch (walletError) {
-            console.error("Failed to recover wallet:", walletError);
+            logger.error("mpc.recovery.wallet_failed", {
+              userId,
+              walletId: backupData.walletId,
+              chainType: backupData.chainType,
+              err: walletError,
+            });
             allErrors.push({
               chainType: backupData.chainType,
               walletId: backupData.walletId,
@@ -463,7 +473,11 @@ export const recoverAllWalletsFromCloud = async (
           }
         }
       } catch (vaultError) {
-        console.error(`Failed to process vault ${shardBId}:`, vaultError);
+        logger.error("mpc.recovery.vault_failed", {
+          userId,
+          shardBId,
+          err: vaultError,
+        });
         allErrors.push({
           vaultId: shardBId,
           error:
@@ -504,7 +518,10 @@ export const recoverAllWalletsFromCloud = async (
       errors: allErrors.length > 0 ? allErrors : undefined,
     });
   } catch (error) {
-    console.error("Recovery error:", error);
+    logger.error("mpc.recovery.all_failed", {
+      userId,
+      err: error,
+    });
     logSecurityEvent(
       userId,
       UserSecurityEventType.CLOUD_RECOVERY_FAILED,
@@ -529,10 +546,10 @@ export const listRecoverableVaults = async (
     try {
       allBackups = await cloudBackupService.listBackups(userId);
     } catch (backupError) {
-      console.error(
-        "[listRecoverableVaults] ERROR fetching backups:",
-        backupError,
-      );
+      logger.error("mpc.recovery.list_vaults.fetch_failed", {
+        userId,
+        err: backupError,
+      });
       return res.status(200).json({ vaults: [] });
     }
 
@@ -573,10 +590,11 @@ export const listRecoverableVaults = async (
             skippedLegacyBackupCount += 1;
             continue;
           }
-          console.error(
-            `[listRecoverableVaults] Failed to fetch/parse backup ${backup.id}:`,
-            fetchError,
-          );
+          logger.error("mpc.recovery.list_vaults.backup_parse_failed", {
+            userId,
+            fileId: backup.id,
+            err: fetchError,
+          });
           continue;
         }
 
@@ -599,17 +617,19 @@ export const listRecoverableVaults = async (
           fileId: backup.id,
         });
       } catch (error) {
-        console.error(
-          "[listRecoverableVaults] ERROR processing backup:",
-          error,
-        );
+        logger.error("mpc.recovery.list_vaults.backup_process_failed", {
+          userId,
+          fileId: backup?.id,
+          err: error,
+        });
       }
     }
 
     if (skippedLegacyBackupCount > 0) {
-      console.info(
-        `[listRecoverableVaults] Skipped ${skippedLegacyBackupCount} legacy backup file(s) (unsupported version).`,
-      );
+      logger.info("mpc.recovery.list_vaults.legacy_skipped", {
+        userId,
+        skippedCount: skippedLegacyBackupCount,
+      });
     }
 
     const vaults = Array.from(vaultMap.entries()).map(([shardBId, data]) => ({
@@ -621,7 +641,10 @@ export const listRecoverableVaults = async (
 
     return res.status(200).json({ vaults });
   } catch (error) {
-    console.error("[listRecoverableVaults] CRITICAL ERROR:", error);
+    logger.error("mpc.recovery.list_vaults.failed", {
+      userId,
+      err: error,
+    });
     return res.status(500).json({
       message: "Failed to list recoverable vaults",
       error: error instanceof Error ? error.message : "Unknown error",

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { ShardStatus } from '@prisma/client';
 import type { IUserRequest } from '../../middleware/requireAuth';
 import prisma from '../../utils/prisma';
+import { logger } from '../../utils/logger';
 
 export const getMpcWallets = async (req: IUserRequest, res: Response) => {
   const userId = Number(req.user?.id);
@@ -63,7 +64,7 @@ export const getMpcWallets = async (req: IUserRequest, res: Response) => {
 
     res.status(200).json(walletsWithBackupStatus);
   } catch (error) {
-    console.error('Error fetching MPC wallets:', error);
+    logger.error('mpc.wallet_query.wallets_fetch_failed', { userId, err: error });
     res.status(500).json({ message: 'Failed to fetch MPC wallets' });
   }
 };
@@ -98,7 +99,7 @@ export const getUserVaults = async (req: IUserRequest, res: Response) => {
 
     res.status(200).json(vaults);
   } catch (error) {
-    console.error('Error fetching vaults:', error);
+    logger.error('mpc.wallet_query.vaults_fetch_failed', { userId, err: error });
     res.status(500).json({ message: 'Failed to fetch vaults' });
   }
 };

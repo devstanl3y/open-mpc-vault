@@ -11,6 +11,7 @@ import { logSecurityEvent } from '../../utils/securityLogger';
 import { getRequestContext } from '../../utils/context';
 import { cloudBackupService } from '../../utils/cloudBackup';
 import { PIN_PEPPER, zeroizeBuffers } from './shared';
+import { logger } from '../../utils/logger';
 
 export const deriveAdditionalWallet = async (req: IUserRequest, res: Response) => {
   const {
@@ -162,7 +163,15 @@ export const deriveAdditionalWallet = async (req: IUserRequest, res: Response) =
       createdAt: newWallet.createdAt,
     });
   } catch (error) {
-    console.error('Wallet derivation error:', error);
+    logger.error('mpc.wallet_derive.failed', {
+      userId,
+      walletId,
+      chainType,
+      accountIndex,
+      addressIndex,
+      hasPin: Boolean(pin),
+      err: error,
+    });
     res.status(500).json({ message: 'Failed to derive additional wallet' });
   } finally {
     zeroizeBuffers(shardA, shardB);
