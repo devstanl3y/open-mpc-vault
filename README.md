@@ -61,6 +61,16 @@ Node.js garbage collection does not guarantee immediate overwrite of deallocated
 - Intermediate buffers (`shardA`, `shardB`, `privateKey`, `seed`) must be overwritten via `buffer.fill(0)` immediately after use.
 - The library provides utility zeroization routines and recommends executing all cryptographic operations in scoped `try...finally` blocks.
 
+## Generalized Non-Blockchain Applications
+
+While `open-mpc-vault` includes built-in HD derivation for Web3 runtimes (Ethereum, Solana, Bitcoin), the underlying 2-of-2 Shamir Secret Sharing scheme and authenticated shard encryption operate on arbitrary 16-byte, 32-byte, or n-byte payloads. This makes the architecture directly applicable to broader security and infrastructure use cases:
+
+- **Distributed Master Key Encryption (Envelope Encryption)**: Split database or filesystem Key Encryption Keys (KEKs) between a client application and a cloud key broker. Neither the cloud infrastructure nor a compromised endpoint can decrypt customer data at rest independently.
+- **High-Privilege API Credential Escrow**: Protect sensitive production root tokens (e.g., AWS root credentials, Stripe restricted keys, OpenAI admin tokens). Access requires an ephemeral handshake between two isolated services or dual-custody administrator sign-offs.
+- **CI/CD Release and Artifact Signing**: Distribute code-signing keys (GPG keys, Apple Developer certificates, Android release keys) such that automated build machines cannot sign releases without explicit, cryptographic quorum from a release authorization server.
+- **Zero-Knowledge Passwordless Account Recovery**: Split an identity or encryption seed between a user's local secure element/passkey and an authentication service to enable account recovery without server-side plaintext escrow.
+- **Multi-Institution Confidential Data Sharing**: Encrypt sensitive medical records or financial datasets where decryption keys require multi-party consensus across distinct legal entities.
+
 ## Installation
 
 ```bash
