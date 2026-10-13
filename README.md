@@ -1,172 +1,215 @@
-# Open MPC Vault (`open-mpc-vault`)
+# open-mpc-vault
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green.svg)](https://nodejs.org/)
+Non-custodial 2-of-2 threshold secret sharing vault and multi-chain hierarchical deterministic (HD) wallet derivation engine for TypeScript and Node.js.
 
-A production-grade, non-custodial **2-of-2 Multi-Party Computation (MPC) Threshold Secret Sharing Vault** with multi-chain HD wallet derivation (Ethereum, Solana, Bitcoin) and hardened AES-256-GCM shard encryption.
+## Overview
 
----
+`open-mpc-vault` implements a threshold key management model where private key material is never persisted or transmitted in plaintext. Entropy (BIP-39 mnemonic seeds or raw cryptographic secrets) is split using a 2-of-2 Shamir Secret Sharing Scheme (SSSS) evaluated over the secp256k1 prime order field.
 
-## 🌟 Overview
+- **Shard A (Client)**: Stored by the end-user or client runtime, encrypted using AES-256-GCM with a PBKDF2-stretched key derived from user credentials (PIN, passphrase, or passkey entropy).
+- **Shard B (Server)**: Stored server-side, encrypted using AES-256-GCM with server-held secrets and independent per-record salts.
+- **Signing Execution**: Neither shard in isolation can derive addresses or sign transactions. During an authorized transaction flow, both shards are decrypted into memory, the original secret is reconstructed via Lagrange polynomial interpolation, the target chain keypair is derived, the payload is signed, and all intermediate buffers are explicitly zeroized.
 
-`open-mpc-vault` implements a non-custodial threshold key management architecture where no single party holds a full private key or seed phrase:
-- **Client Shard (Shard A)**: Held by the user or client app, encrypted locally via AES-256-GCM using PBKDF2-stretched credentials (e.g. user PIN or passkey).
-- **Server Shard (Shard B)**: Stored server-side in encrypted format with independent salts and server secrets.
-- **Threshold Reconstruction**: The original entropy is split using a **2-of-2 Shamir's Secret Sharing Scheme** over the secp256k1 field and only reconstituted ephemerally in-memory during authorized signing sessions.
+## Architecture
 
 ```
-       [ Seed Phrase / Random Entropy (16 or 32 bytes) ]
-                                |
-               Shamir's Secret Sharing (2-of-2)
-                                |
-            +-------------------+-------------------+
-            |                                       |
-        [ Shard A ]                             [ Shard B ]
-            |                                       |
-    AES-256-GCM Encrypted                   AES-256-GCM Encrypted
-   (User PIN + PBKDF2)                    (Server Secret + Salt)
-            |                                       |
-    [ Client / Device ]                      [ Vault Server ]
-            \                                       /
-             \--- Ephemeral Handshake (Signing) ---/
-                                |
-                   [ In-Memory Reconstruction ]
-                                |
-             +------------------+------------------+
-             |                  |                  |
-           EVM               Solana             Bitcoin
-      (BIP-44 m/60')     (BIP-44 m/501')     (BIP-84 m/84')
+                 [ Master Secret / Entropy (16 or 32 Bytes) ]
+                                      |
+                     Shamir's Secret Sharing (k=2, n=2)
+                                      |
+               +----------------------+----------------------+
+               |                                             |
+          [ Shard A ]                                   [ Shard B ]
+               |                                             |
+      PBKDF2-HMAC-SHA512                             Server Key Derivation
+      AES-256-GCM Encrypted                          AES-256-GCM Encrypted
+               |                                             |
+       [ Client Device ]                             [ Storage Backend ]
+               \                                             /
+                \--- Ephemeral Session Authorization -------/
+                                      |
+                       [ In-Memory Lagrange Reconstruction ]
+                                      |
+                 +--------------------+--------------------+
+                 |                    |                    |
+             Ethereum               Solana              Bitcoin
+             secp256k1             Ed25519             secp256k1
+          BIP-44 (m/44'/60')    BIP-44 (m/44'/501')  BIP-84 (m/84'/0')
 ```
 
----
+## Cryptographic Specifications
 
-## 🚀 Features
+| Component | Primitive / Standard | Parameters / Details |
+|---|---|---|
+| Secret Sharing | Shamir Secret Sharing (k=2, n=2) | Field prime $p = 2^{256} - 2^{32} - 977$ |
+| Key Derivation (Client) | PBKDF2-HMAC-SHA512 | 100,000 iterations, 16-byte random salt, 32-byte key |
+| Shard Encryption | AES-256-GCM (Authenticated Encryption) | 12-byte IV, 16-byte authentication tag |
+| Mnemonic Handling | BIP-39 | English wordlist, 128-bit (12 words) or 256-bit (24 words) entropy |
+| EVM Derivation | BIP-32 / BIP-44 (secp256k1) | Path `m/44'/60'/account'/0/addressIndex`, Keccak-256 address hashing |
+| Solana Derivation | SLIP-0010 / BIP-44 (Ed25519) | Path `m/44'/501'/account'/0'`, Base58 public key encoding |
+| Bitcoin Derivation | BIP-84 (Native SegWit / P2WPKH) | Path `m/84'/0'/account'/0/addressIndex`, Bech32 encoding (`bc1...`) |
 
-- **2-of-2 Shamir Secret Sharing**: Finite-field polynomial secret sharing over secp256k1 prime order with Lagrange interpolation.
-- **Client-Side Shard Encryption**: AES-256-GCM authenticated encryption with 100,000 PBKDF2 iterations (SHA-512) and unique salts.
-- **Multi-Chain Hierarchical Deterministic (HD) Derivation**:
-  - **Ethereum / EVM**: BIP-44 (`m/44'/60'/account'/0/index`) via secp256k1 and Keccak-256.
-  - **Solana**: BIP-44 (`m/44'/501'/account'/0'`) via Ed25519 curve keypairs.
-  - **Bitcoin**: BIP-84 Native SegWit (`m/84'/0'/account'/0/index`) via P2WPKH (`bc1...`).
-- **BIP-39 Mnemonic Support**: Standard 12-word and 24-word seed phrase generation, validation, and entropy conversion.
-- **Pluggable Storage Adapters**: Built-in memory adapter and interfaces for Redis, PostgreSQL, SQLite, or custom backends.
-- **Zero Heavy Framework Lock-In**: Decoupled, modular TypeScript library with zero database dependencies.
+## Threat Model and Security Guarantees
 
----
+### Trust Assumptions
+- **Client Compromise Only**: An attacker with access to the client storage acquires only encrypted Shard A. Without the user PIN/passphrase and without Shard B, the private key cannot be derived.
+- **Server Compromise Only**: An attacker with read access to the database acquires only encrypted Shard B. Without the server encryption secret and without Shard A, the private key cannot be derived.
+- **Network Adversary**: Shards are never transmitted in plaintext. Signing sessions require authenticated, end-to-end encrypted transport.
 
-## 📦 Installation
+### Memory Safety and Zeroization
+Node.js garbage collection does not guarantee immediate overwrite of deallocated memory. To minimize exposure:
+- Intermediate buffers (`shardA`, `shardB`, `privateKey`, `seed`) must be overwritten via `buffer.fill(0)` immediately after use.
+- The library provides utility zeroization routines and recommends executing all cryptographic operations in scoped `try...finally` blocks.
+
+## Installation
 
 ```bash
 npm install open-mpc-vault
-# or
-pnpm add open-mpc-vault
-# or
-yarn add open-mpc-vault
 ```
 
----
+Peer requirements: Node.js >= 18.0.0.
 
-## 🛠️ Quickstart
+## API Usage
 
-### 1. Generating & Splitting an MPC Wallet Seed
+### 1. Provisioning a New Vault Seed
 
 ```typescript
 import { MpcKeyGenerator, ShardEncryption } from 'open-mpc-vault';
 
-// 1. Generate a new 12-word MPC seed split into 2-of-2 threshold shards
+// Generate a 12-word BIP-39 seed split into 2-of-2 shards
 const { shardA, shardB, mnemonic, entropy } = MpcKeyGenerator.createMpcSeed(12);
 
-console.log('Mnemonic phrase (backup):', mnemonic);
-
-// 2. Encrypt Shard A on client using user PIN / passphrase
-const userPin = '839201';
+// Encrypt Shard A on the client using user credentials
+const userPin = '749201';
 const encryptedShardA = ShardEncryption.encryptShardA(shardA, userPin);
 
-// 3. Encrypt Shard B server-side using server secret
+// Encrypt Shard B using the server master secret
 const encryptedShardB = ShardEncryption.encryptShardB(shardB);
+
+// Securely wipe raw memory buffers after persistence
+shardA.fill(0);
+shardB.fill(0);
+entropy.fill(0);
 ```
 
-### 2. Signing / Reconstituting & Deriving Addresses
+### 2. Ephemeral Reconstruction and Multi-Chain Derivation
 
 ```typescript
 import {
   ShardEncryption,
-  ShamirSecretSharing,
   deriveWalletFromShards,
   ChainType,
   CurveType,
 } from 'open-mpc-vault';
 
-// 1. Decrypt both shards during an authorized signing session
-const decryptedShardA = ShardEncryption.decryptShardA(
-  encryptedShardA.encrypted,
-  encryptedShardA.iv,
-  encryptedShardA.tag,
-  userPin,
-  encryptedShardA.salt
-);
+let decryptedA: Buffer | undefined;
+let decryptedB: Buffer | undefined;
 
-const decryptedShardB = ShardEncryption.decryptShardB(encryptedShardB);
+try {
+  // Decrypt Shard A with the user PIN and stored salt/IV/tag
+  decryptedA = ShardEncryption.decryptShardA(
+    encryptedShardA.encrypted,
+    encryptedShardA.iv,
+    encryptedShardA.tag,
+    userPin,
+    encryptedShardA.salt
+  );
 
-// 2. Derive multi-chain wallets directly from shards
-const ethWallet = deriveWalletFromShards({
-  shardA: decryptedShardA,
-  shardB: decryptedShardB,
-  chainType: ChainType.ETHEREUM,
-  curveType: CurveType.SECP256K1,
-  accountIndex: 0,
-  addressIndex: 0,
-});
+  // Decrypt Shard B with server credentials
+  decryptedB = ShardEncryption.decryptShardB(encryptedShardB);
 
-console.log('Ethereum Address:', ethWallet.address); // 0x...
+  // 1. Derive EVM Wallet (Ethereum / Polygon / Arbitrum / Base)
+  const evmWallet = deriveWalletFromShards({
+    shardA: decryptedA,
+    shardB: decryptedB,
+    chainType: ChainType.ETHEREUM,
+    curveType: CurveType.SECP256K1,
+    accountIndex: 0,
+    addressIndex: 0,
+  });
+  console.log('EVM Address:', evmWallet.address);
 
-const solWallet = deriveWalletFromShards({
-  shardA: decryptedShardA,
-  shardB: decryptedShardB,
-  chainType: ChainType.SOLANA,
-  curveType: CurveType.ED25519,
-  accountIndex: 0,
-});
+  // 2. Derive Solana Wallet (Ed25519)
+  const solanaWallet = deriveWalletFromShards({
+    shardA: decryptedA,
+    shardB: decryptedB,
+    chainType: ChainType.SOLANA,
+    curveType: CurveType.ED25519,
+    accountIndex: 0,
+  });
+  console.log('Solana Address:', solanaWallet.address);
 
-console.log('Solana Address:', solWallet.address);
+  // 3. Derive Bitcoin Wallet (BIP-84 Native SegWit)
+  const btcWallet = deriveWalletFromShards({
+    shardA: decryptedA,
+    shardB: decryptedB,
+    chainType: ChainType.BITCOIN,
+    accountIndex: 0,
+    addressIndex: 0,
+  });
+  console.log('Bitcoin Address:', btcWallet.address);
 
-const btcWallet = deriveWalletFromShards({
-  shardA: decryptedShardA,
-  shardB: decryptedShardB,
-  chainType: ChainType.BITCOIN,
-  accountIndex: 0,
-  addressIndex: 0,
-});
-
-console.log('Bitcoin Address:', btcWallet.address); // bc1...
+} finally {
+  // Mandatory buffer cleanup
+  if (decryptedA) decryptedA.fill(0);
+  if (decryptedB) decryptedB.fill(0);
+}
 ```
 
----
+### 3. Importing an Existing Seed Phrase
 
-## 🔒 Security Architecture
+```typescript
+import { SeedPhraseUtils } from 'open-mpc-vault';
 
-1. **Threshold Guarantee**: Neither party (User with only Shard A, nor Server with only Shard B) can reconstruct the private key independently.
-2. **Field Arithmetic**: Secret sharing is computed over the finite prime field $p = 2^{256} - 2^{32} - 977$ matching secp256k1.
-3. **AEAD Encryption**: All shards are encrypted with AES-256-GCM with authentication tags ensuring ciphertext integrity and tampering detection.
-4. **Key Zeroization**: Sensitive decrypted byte buffers should be zeroized (`buffer.fill(0)`) immediately after transaction signing.
+const userMnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
----
+// Validate BIP-39 checksum
+if (!SeedPhraseUtils.validateMnemonic(userMnemonic)) {
+  throw new Error('Invalid seed phrase checksum');
+}
 
-## 🧪 Running Tests
+// Convert to entropy and split into threshold shards
+const { shardA, shardB } = SeedPhraseUtils.splitMnemonicIntoShards(userMnemonic);
+```
 
+### 4. Storage Adapter Interface
+
+`open-mpc-vault` decouples shard persistence through the `ShardStorageAdapter` interface:
+
+```typescript
+export interface ShardStorageAdapter {
+  storeShardB(shardBId: string, userId: number, shardBData: Buffer): Promise<void>;
+  retrieveShardB(shardBId: string, userId: number): Promise<Buffer | null>;
+  deleteShardB(shardBId: string, userId: number): Promise<boolean>;
+}
+```
+
+An in-memory reference adapter (`InMemoryShardStorageAdapter`) is provided for testing and local integration. Production deployments can supply adapters targeting PostgreSQL, Redis, DynamoDB, or hardware security modules (HSMs).
+
+## Development and Verification
+
+### Prerequisites
+- Node.js >= 18.0.0
+- npm >= 9.0.0
+
+### Build
+```bash
+npm run build
+```
+
+### Test Suite
+Tests execute using Node.js native test runner and verify cryptographic correctness against standard vectors:
 ```bash
 npm test
 ```
 
-All unit tests run using Node.js native test runner testing:
-- Shamir secret splitting and Lagrange polynomial reconstruction
-- AES-256-GCM encryption with valid and invalid PINs
-- BIP-44 / BIP-84 HD wallet derivation across Ethereum, Solana, and Bitcoin
-- Complete end-to-end lifecycle verification
+Test coverage includes:
+- Shamir secret reconstruction and threshold boundary enforcement
+- PBKDF2 derivation and AES-256-GCM authentication failure detection
+- BIP-39 mnemonic parsing and entropy round-trip verification
+- Deterministic BIP-44 and BIP-84 multi-chain address derivation
+- End-to-end threshold lifecycle flows
 
----
+## License
 
-## 📄 License
-
-[MIT License](LICENSE)
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
