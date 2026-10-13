@@ -1,7 +1,7 @@
 import { ShamirSecretSharing } from './shamir';
 import { SeedPhraseUtils } from './seedPhrase';
 import { HDWalletDerivation, ChainType, DerivedWallet } from './hdWallet';
-import { CurveType } from '@prisma/client';
+import { CurveType } from '../types';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { ed25519 } from '@noble/curves/ed25519';

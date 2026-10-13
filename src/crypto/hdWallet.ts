@@ -3,18 +3,11 @@ import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { Keypair } from '@solana/web3.js';
 import * as bitcoin from 'bitcoinjs-lib';
-import { ChainType, CurveType } from '@prisma/client';
+import { ChainType, CurveType, DerivedWallet } from '../types';
 
-export { ChainType };
+export { ChainType, CurveType, DerivedWallet };
 
-export interface DerivedWallet {
-  privateKey: Buffer;
-  publicKey: Buffer;
-  address: string;
-  chainType: ChainType;
-  derivationPath: string;
-  curveType: CurveType;
-}
+
 
 export class HDWalletDerivation {
   private static readonly COIN_TYPES = {

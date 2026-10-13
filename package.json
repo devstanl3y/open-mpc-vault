@@ -1,0 +1,43 @@
+{
+  "name": "open-mpc-vault",
+  "version": "0.1.0",
+  "description": "Production-ready 2-of-2 Shamir threshold secret sharing wallet vault with HD derivation (EVM, Solana, Bitcoin) and AES-256-GCM shard encryption",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mpc",
+    "tss",
+    "shamir-secret-sharing",
+    "threshold-signatures",
+    "non-custodial",
+    "hd-wallet",
+    "crypto-vault"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/curves": "^1.4.0",
+    "@noble/hashes": "^1.4.0",
+    "@scure/bip32": "^1.4.0",
+    "@solana/web3.js": "^1.90.0",
+    "bip39": "^3.1.0",
+    "bitcoinjs-lib": "^6.1.5",
+    "bs58": "^5.0.0",
+    "ethers": "^6.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

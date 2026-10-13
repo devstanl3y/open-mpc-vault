@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { encryptShardA, decryptShardA } from '@/lib/crypto';
+import { ShardEncryption } from '../crypto/shardEncryption';
 
 export interface MpcWallet {
   id: string;
