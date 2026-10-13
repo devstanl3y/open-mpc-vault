@@ -12,7 +12,9 @@ export enum CurveType {
 export interface MpcSeedShards {
   shardA: Buffer;
   shardB: Buffer;
+  /** BIP-39 mnemonic; empty string for raw private-key imports. */
   mnemonic: string;
+  /** Raw secret that was split: BIP-39 entropy or a 32-byte private key. */
   entropy: Buffer;
 }
 
@@ -26,14 +28,12 @@ export interface DerivedWallet {
 }
 
 export interface EncryptedShard {
+  /** Hex ciphertext. */
   encrypted: string;
+  /** Hex IV. */
   iv: string;
+  /** Hex GCM authentication tag. */
   tag: string;
+  /** Hex PBKDF2 salt. Absent only in the legacy `salt:ciphertext` format. */
   salt?: string;
-}
-
-export interface MpcConfig {
-  serverSecret?: string;
-  serverSalt?: string;
-  pbkdf2Iterations?: number;
 }

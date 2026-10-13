@@ -7,11 +7,8 @@ describe('ShardEncryption', () => {
   const pin = '482910';
   const shard = crypto.randomBytes(34);
 
-  test('encrypts and decrypts Shard A with valid PIN', () => {
+  test('round-trips Shard A with the correct PIN', () => {
     const encrypted = ShardEncryption.encryptShardA(shard, pin);
-    assert.ok(encrypted.encrypted);
-    assert.ok(encrypted.iv);
-    assert.ok(encrypted.tag);
     assert.ok(encrypted.salt);
 
     const decrypted = ShardEncryption.decryptShardA(
@@ -21,29 +18,37 @@ describe('ShardEncryption', () => {
       pin,
       encrypted.salt
     );
-
-    assert.strictEqual(decrypted.toString('hex'), shard.toString('hex'));
+    assert.deepStrictEqual(decrypted, shard);
   });
 
-  test('fails decryption with invalid PIN', () => {
+  test('decrypts the legacy salt:ciphertext Shard A format', () => {
     const encrypted = ShardEncryption.encryptShardA(shard, pin);
-
-    assert.throws(() => {
-      ShardEncryption.decryptShardA(
-        encrypted.encrypted,
-        encrypted.iv,
-        encrypted.tag,
-        'wrong-pin',
-        encrypted.salt
-      );
-    });
+    const legacy = `${encrypted.salt}:${encrypted.encrypted}`;
+    const decrypted = ShardEncryption.decryptShardA(legacy, encrypted.iv, encrypted.tag, pin);
+    assert.deepStrictEqual(decrypted, shard);
   });
 
-  test('encrypts and decrypts Shard B with server secret', () => {
-    const encryptedB = ShardEncryption.encryptShardB(shard);
-    assert.ok(typeof encryptedB === 'string');
+  test('rejects Shard A with a wrong PIN', () => {
+    const e = ShardEncryption.encryptShardA(shard, pin);
+    assert.throws(() =>
+      ShardEncryption.decryptShardA(e.encrypted, e.iv, e.tag, 'wrong-pin', e.salt)
+    );
+  });
 
-    const decryptedB = ShardEncryption.decryptShardB(encryptedB);
-    assert.strictEqual(decryptedB.toString('hex'), shard.toString('hex'));
+  test('rejects a truncated authentication tag', () => {
+    const e = ShardEncryption.encryptShardA(shard, pin);
+    assert.throws(
+      () => ShardEncryption.decryptShardA(e.encrypted, e.iv, e.tag.slice(0, 8), pin, e.salt),
+      /tag length/
+    );
+  });
+
+  test('round-trips Shard B and rejects tampered ciphertext', () => {
+    const encrypted = ShardEncryption.encryptShardB(shard);
+    assert.deepStrictEqual(ShardEncryption.decryptShardB(encrypted), shard);
+
+    const lastByte = parseInt(encrypted.slice(-2), 16) ^ 0x01;
+    const tampered = encrypted.slice(0, -2) + lastByte.toString(16).padStart(2, '0');
+    assert.throws(() => ShardEncryption.decryptShardB(tampered));
   });
 });

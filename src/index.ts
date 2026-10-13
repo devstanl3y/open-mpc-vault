@@ -4,6 +4,7 @@ export {
   SeedPhraseUtils,
   HDWalletDerivation,
   MpcKeyGenerator,
+  IMPORTED_KEY_DERIVATION_PATH,
   type MpcDerivedWallet,
   type WalletImportData,
   ShardEncryption,

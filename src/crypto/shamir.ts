@@ -1,39 +1,73 @@
 import crypto from 'crypto';
 
+/**
+ * Shamir secret sharing over the secp256k1 base field
+ * (p = 2^256 - 2^32 - 977).
+ *
+ * Share encoding (current, 34 bytes):
+ *   [0]     x-coordinate (1..255)
+ *   [1]     original secret length in bytes (1..32)
+ *   [2..34) y-coordinate, big-endian, zero-padded to 32 bytes
+ *
+ * Legacy encoding (33 bytes) omits the length byte and always reconstructs a
+ * 32-byte secret. It is accepted for reconstruction only.
+ */
 export class ShamirSecretSharing {
   private static readonly PRIME =
     BigInt('0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f');
-  private static readonly LEGACY_Y_BYTES = 32;
-  private static readonly EXTENDED_SHARE_BYTES = 34; // x (1) + entropyLength (1) + y (32)
+  private static readonly MAX_SECRET_BYTES = 32;
+  private static readonly LEGACY_SHARE_BYTES = 1 + 32;
+  private static readonly SHARE_BYTES = 1 + 1 + 32;
+  private static readonly MAX_SHARES = 255;
 
-  private static modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
+  private static mod(a: bigint): bigint {
+    const r = a % this.PRIME;
+    return r >= 0n ? r : r + this.PRIME;
+  }
+
+  private static modPow(base: bigint, exponent: bigint): bigint {
     let result = 1n;
-    base = base % modulus;
-    while (exponent > 0) {
-      if (exponent % 2n === 1n) result = (result * base) % modulus;
+    base = this.mod(base);
+    while (exponent > 0n) {
+      if (exponent & 1n) result = (result * base) % this.PRIME;
       exponent >>= 1n;
-      base = (base * base) % modulus;
+      base = (base * base) % this.PRIME;
     }
     return result;
   }
 
-  private static modInverse(a: bigint, m: bigint): bigint {
-    const [g, x] = this.extendedGcd(a, m);
-    if (g !== 1n) throw new Error('Modular inverse does not exist');
-    return (x % m + m) % m;
+  /** Inverse via Fermat's little theorem; PRIME is prime. */
+  private static modInverse(a: bigint): bigint {
+    const reduced = this.mod(a);
+    if (reduced === 0n) throw new Error('Modular inverse of zero');
+    return this.modPow(reduced, this.PRIME - 2n);
   }
 
-  private static extendedGcd(a: bigint, b: bigint): [bigint, bigint, bigint] {
-    if (a === 0n) return [b, 0n, 1n];
-    const [g, x1, y1] = this.extendedGcd(b % a, a);
-    const x = y1 - (b / a) * x1;
-    const y = x1;
-    return [g, x, y];
+  private static randomFieldElement(): bigint {
+    // Rejection sampling avoids modulo bias.
+    for (;;) {
+      const candidate = BigInt('0x' + crypto.randomBytes(32).toString('hex'));
+      if (candidate < this.PRIME) return candidate;
+    }
   }
 
-  static splitSecret(secret: Buffer, threshold: number, p0: number): Buffer[] {
-    if (secret.length < 1 || secret.length > this.LEGACY_Y_BYTES) {
-      throw new Error('Secret length must be between 1 and 32 bytes');
+  private static toFixedBytes(value: bigint): Buffer {
+    return Buffer.from(value.toString(16).padStart(this.MAX_SECRET_BYTES * 2, '0'), 'hex');
+  }
+
+  /**
+   * Split `secret` into `shareCount` shares, any `threshold` of which
+   * reconstruct it.
+   */
+  static splitSecret(secret: Buffer, threshold = 2, shareCount = 2): Buffer[] {
+    if (secret.length < 1 || secret.length > this.MAX_SECRET_BYTES) {
+      throw new Error(`Secret length must be between 1 and ${this.MAX_SECRET_BYTES} bytes`);
+    }
+    if (!Number.isInteger(threshold) || threshold < 2) {
+      throw new Error('Threshold must be an integer >= 2');
+    }
+    if (!Number.isInteger(shareCount) || shareCount < threshold || shareCount > this.MAX_SHARES) {
+      throw new Error(`Share count must be an integer between threshold and ${this.MAX_SHARES}`);
     }
 
     const secretNum = BigInt('0x' + secret.toString('hex'));
@@ -41,88 +75,74 @@ export class ShamirSecretSharing {
 
     const coefficients = [secretNum];
     for (let i = 1; i < threshold; i++) {
-      coefficients.push(
-        BigInt('0x' + crypto.randomBytes(32).toString('hex')) % this.PRIME
-      );
+      coefficients.push(this.randomFieldElement());
     }
 
     const shares: Buffer[] = [];
-    for (let x = 1; x <= 2; x++) {
+    for (let x = 1; x <= shareCount; x++) {
+      const xBig = BigInt(x);
       let y = 0n;
       let xPow = 1n;
       for (const coef of coefficients) {
         y = (y + coef * xPow) % this.PRIME;
-        xPow = (xPow * BigInt(x)) % this.PRIME;
+        xPow = (xPow * xBig) % this.PRIME;
       }
-      const xByte = Buffer.from([x]);
-      const entropyLengthByte = Buffer.from([secret.length]);
-      const yBuffer = Buffer.from(
-        y.toString(16).padStart(this.LEGACY_Y_BYTES * 2, '0'),
-        'hex'
-      );
-      shares.push(Buffer.concat([xByte, entropyLengthByte, yBuffer]));
+      shares.push(Buffer.concat([Buffer.from([x, secret.length]), this.toFixedBytes(y)]));
     }
 
     return shares;
   }
 
+  /**
+   * Reconstruct the secret from at least `threshold` shares. The threshold is
+   * not encoded in the share, so supplying too few shares yields an incorrect
+   * value rather than an error.
+   */
   static reconstructSecret(shares: Buffer[]): Buffer {
     if (shares.length < 2) throw new Error('At least 2 shares required');
 
-    const hasExtendedFormat = shares.every(
-      (share) => share.length === this.EXTENDED_SHARE_BYTES
-    );
-    const hasLegacyFormat = shares.every(
-      (share) => share.length === this.LEGACY_Y_BYTES + 1
-    );
-
-    if (!hasExtendedFormat && !hasLegacyFormat) {
+    const isCurrentFormat = shares.every((s) => s.length === this.SHARE_BYTES);
+    const isLegacyFormat = shares.every((s) => s.length === this.LEGACY_SHARE_BYTES);
+    if (!isCurrentFormat && !isLegacyFormat) {
       throw new Error('Invalid share format');
     }
 
-    const entropyLength = hasExtendedFormat ? shares[0][1] : this.LEGACY_Y_BYTES;
-    if (entropyLength < 1 || entropyLength > this.LEGACY_Y_BYTES) {
+    const secretLength = isCurrentFormat ? shares[0][1] : this.MAX_SECRET_BYTES;
+    if (secretLength < 1 || secretLength > this.MAX_SECRET_BYTES) {
       throw new Error('Invalid secret length in share');
     }
-    if (hasExtendedFormat && !shares.every((share) => share[1] === entropyLength)) {
+    if (isCurrentFormat && !shares.every((s) => s[1] === secretLength)) {
       throw new Error('Inconsistent secret lengths across shares');
     }
 
-    const parsed = shares.map((share) => {
-      const x = BigInt(share[0]);
-      const ySlice = hasExtendedFormat ? share.slice(2) : share.slice(1);
-      const y = BigInt('0x' + ySlice.toString('hex'));
-      return { x, y };
-    });
+    const yOffset = isCurrentFormat ? 2 : 1;
+    const points = shares.map((share) => ({
+      x: BigInt(share[0]),
+      y: BigInt('0x' + share.subarray(yOffset).toString('hex')),
+    }));
 
+    const seen = new Set<bigint>();
+    for (const { x } of points) {
+      if (x === 0n) throw new Error('Invalid share: x-coordinate must be non-zero');
+      if (seen.has(x)) throw new Error('Duplicate share x-coordinate');
+      seen.add(x);
+    }
+
+    // Lagrange interpolation evaluated at x = 0.
     let secret = 0n;
-
-    for (let i = 0; i < parsed.length; i++) {
-      const { x: x1, y: y1 } = parsed[i];
-
+    for (let i = 0; i < points.length; i++) {
       let numerator = 1n;
       let denominator = 1n;
-
-      for (let j = 0; j < parsed.length; j++) {
+      for (let j = 0; j < points.length; j++) {
         if (i === j) continue;
-        const { x: x2 } = parsed[j];
-        numerator = (numerator * (0n - x2 + this.PRIME)) % this.PRIME;
-        denominator = (denominator * (x1 - x2 + this.PRIME)) % this.PRIME;
+        numerator = this.mod(numerator * -points[j].x);
+        denominator = this.mod(denominator * (points[i].x - points[j].x));
       }
-
-      const lagrangeCoefficient =
-        (numerator * this.modInverse(denominator, this.PRIME)) % this.PRIME;
-      secret = (secret + y1 * lagrangeCoefficient) % this.PRIME;
+      const basis = (numerator * this.modInverse(denominator)) % this.PRIME;
+      secret = (secret + points[i].y * basis) % this.PRIME;
     }
 
-    const reconstructed = Buffer.from(
-      secret.toString(16).padStart(this.LEGACY_Y_BYTES * 2, '0'),
-      'hex'
-    );
-
-    if (entropyLength === this.LEGACY_Y_BYTES) {
-      return reconstructed;
-    }
-    return reconstructed.slice(this.LEGACY_Y_BYTES - entropyLength);
+    const full = this.toFixedBytes(secret);
+    return Buffer.from(full.subarray(this.MAX_SECRET_BYTES - secretLength));
   }
 }

@@ -4,11 +4,13 @@ Non-custodial 2-of-2 threshold secret sharing vault and multi-chain hierarchical
 
 ## Overview
 
-`open-mpc-vault` implements a threshold key management model where private key material is never persisted or transmitted in plaintext. Entropy (BIP-39 mnemonic seeds or raw cryptographic secrets) is split using a 2-of-2 Shamir Secret Sharing Scheme (SSSS) evaluated over the secp256k1 prime order field.
+`open-mpc-vault` implements a threshold key management model where private key material is never persisted or transmitted in plaintext. Entropy (BIP-39 mnemonic seeds or raw cryptographic secrets) is split using a 2-of-2 Shamir Secret Sharing Scheme (SSSS) evaluated over the secp256k1 base field ($\mathbb{F}_p$).
 
-- **Shard A (Client)**: Stored by the end-user or client runtime, encrypted using AES-256-GCM with a PBKDF2-stretched key derived from user credentials (PIN, passphrase, or passkey entropy).
-- **Shard B (Server)**: Stored server-side, encrypted using AES-256-GCM with server-held secrets and independent per-record salts.
+- **Shard A (Client)**: Stored by the end-user or client runtime, encrypted using AES-256-GCM with a PBKDF2-HMAC-SHA512 key derived from user credentials (PIN, passphrase, or passkey entropy).
+- **Shard B (Server)**: Stored server-side, encrypted using AES-256-GCM with server-held secrets and independent storage adapters.
 - **Signing Execution**: Neither shard in isolation can derive addresses or sign transactions. During an authorized transaction flow, both shards are decrypted into memory, the original secret is reconstructed via Lagrange polynomial interpolation, the target chain keypair is derived, the payload is signed, and all intermediate buffers are explicitly zeroized.
+
+> **Note on Architecture**: This library uses Shamir Secret Sharing with ephemeral in-memory reconstruction. This is distinct from Multi-Party Computation (MPC) threshold signing schemes (such as FROST or GG20/CMP) where signatures are generated across distributed nodes without ever assembling the underlying private key. See [REVIEW.md](REVIEW.md) for full architectural analysis and trade-offs.
 
 ## Architecture
 
@@ -42,17 +44,17 @@ Non-custodial 2-of-2 threshold secret sharing vault and multi-chain hierarchical
 | Component | Primitive / Standard | Parameters / Details |
 |---|---|---|
 | Secret Sharing | Shamir Secret Sharing (k=2, n=2) | Field prime $p = 2^{256} - 2^{32} - 977$ |
-| Key Derivation (Client) | PBKDF2-HMAC-SHA512 | 100,000 iterations, 16-byte random salt, 32-byte key |
-| Shard Encryption | AES-256-GCM (Authenticated Encryption) | 12-byte IV, 16-byte authentication tag |
+| Key Derivation (Client) | PBKDF2-HMAC-SHA512 | 100,000 iterations, 32-byte salt, 32-byte key |
+| Shard Encryption | AES-256-GCM (Authenticated Encryption) | 16-byte IV, 16-byte authentication tag |
 | Mnemonic Handling | BIP-39 | English wordlist, 128-bit (12 words) or 256-bit (24 words) entropy |
 | EVM Derivation | BIP-32 / BIP-44 (secp256k1) | Path `m/44'/60'/account'/0/addressIndex`, Keccak-256 address hashing |
-| Solana Derivation | SLIP-0010 / BIP-44 (Ed25519) | Path `m/44'/501'/account'/0'`, Base58 public key encoding |
+| Solana Derivation | BIP-44 (Ed25519) | Path `m/44'/501'/account'/0'`, Base58 public key encoding |
 | Bitcoin Derivation | BIP-84 (Native SegWit / P2WPKH) | Path `m/84'/0'/account'/0/addressIndex`, Bech32 encoding (`bc1...`) |
 
 ## Threat Model and Security Guarantees
 
 ### Trust Assumptions
-- **Client Compromise Only**: An attacker with access to the client storage acquires only encrypted Shard A. Without the user PIN/passphrase and without Shard B, the private key cannot be derived.
+- **Client Compromise Only**: An attacker with access to client storage acquires only encrypted Shard A. Without the user PIN/passphrase and without Shard B, the private key cannot be derived.
 - **Server Compromise Only**: An attacker with read access to the database acquires only encrypted Shard B. Without the server encryption secret and without Shard A, the private key cannot be derived.
 - **Network Adversary**: Shards are never transmitted in plaintext. Signing sessions require authenticated, end-to-end encrypted transport.
 
@@ -93,7 +95,7 @@ const { shardA, shardB, mnemonic, entropy } = MpcKeyGenerator.createMpcSeed(12);
 const userPin = '749201';
 const encryptedShardA = ShardEncryption.encryptShardA(shardA, userPin);
 
-// Encrypt Shard B using the server master secret
+// Encrypt Shard B using server credentials
 const encryptedShardB = ShardEncryption.encryptShardB(shardB);
 
 // Securely wipe raw memory buffers after persistence
@@ -166,35 +168,62 @@ try {
 }
 ```
 
-### 3. Importing an Existing Seed Phrase
+### 3. Importing an Existing Seed Phrase or Private Key
 
 ```typescript
-import { SeedPhraseUtils } from 'open-mpc-vault';
+import { MpcKeyGenerator, SeedPhraseUtils } from 'open-mpc-vault';
 
-const userMnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-
-// Validate BIP-39 checksum
-if (!SeedPhraseUtils.validateMnemonic(userMnemonic)) {
+// Option A: Import 12- or 24-word BIP-39 mnemonic
+const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+if (!SeedPhraseUtils.validate(mnemonic)) {
   throw new Error('Invalid seed phrase checksum');
 }
+const seedShards = MpcKeyGenerator.importMpcSeed(mnemonic);
 
-// Convert to entropy and split into threshold shards
-const { shardA, shardB } = SeedPhraseUtils.splitMnemonicIntoShards(userMnemonic);
+// Option B: Import a raw 32-byte private key (hex, optional 0x prefix)
+const rawKey = '0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318';
+const keyShards = MpcKeyGenerator.importPrivateKey(rawKey);
 ```
 
-### 4. Storage Adapter Interface
+### 4. Custom Storage Adapter
 
 `open-mpc-vault` decouples shard persistence through the `ShardStorageAdapter` interface:
 
 ```typescript
-export interface ShardStorageAdapter {
-  storeShardB(shardBId: string, userId: number, shardBData: Buffer): Promise<void>;
-  retrieveShardB(shardBId: string, userId: number): Promise<Buffer | null>;
-  deleteShardB(shardBId: string, userId: number): Promise<boolean>;
+import { ShardStorage, type ShardStorageAdapter } from 'open-mpc-vault';
+
+class RedisShardStorageAdapter implements ShardStorageAdapter {
+  constructor(private redis: any) {}
+
+  async get(key: string): Promise<string | undefined> {
+    const val = await this.redis.get(key);
+    return val ?? undefined;
+  }
+
+  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    if (ttlSeconds) {
+      await this.redis.set(key, value, 'EX', ttlSeconds);
+    } else {
+      await this.redis.set(key, value);
+    }
+  }
+
+  async del(key: string): Promise<void> {
+    await this.redis.del(key);
+  }
 }
+
+// Register the custom adapter for server-side persistence
+ShardStorage.setAdapter(new RedisShardStorageAdapter(redisClient));
 ```
 
-An in-memory reference adapter (`InMemoryShardStorageAdapter`) is provided for testing and local integration. Production deployments can supply adapters targeting PostgreSQL, Redis, DynamoDB, or hardware security modules (HSMs).
+## Reference Examples
+
+Complete integration examples are available in the [`examples/`](examples/) directory:
+
+- **[`examples/express-prisma/`](examples/express-prisma/)**: Production Express backend integrating Prisma ORM, user PIN authentication, signing sessions, rate limiting, and Google Drive cloud backups.
+- **[`examples/react/`](examples/react/)**: React hook (`useMpcWallet`) for client-side vault lifecycle management.
+- **[`examples/rust-wallet-loader/`](examples/rust-wallet-loader/)**: High-performance Rust loader for trading engines demonstrating Shamir Lagrange reconstruction and `ethers-rs` integration.
 
 ## Development and Verification
 
@@ -202,8 +231,9 @@ An in-memory reference adapter (`InMemoryShardStorageAdapter`) is provided for t
 - Node.js >= 18.0.0
 - npm >= 9.0.0
 
-### Build
+### Build & Typecheck
 ```bash
+npm run typecheck
 npm run build
 ```
 
@@ -212,13 +242,6 @@ Tests execute using Node.js native test runner and verify cryptographic correctn
 ```bash
 npm test
 ```
-
-Test coverage includes:
-- Shamir secret reconstruction and threshold boundary enforcement
-- PBKDF2 derivation and AES-256-GCM authentication failure detection
-- BIP-39 mnemonic parsing and entropy round-trip verification
-- Deterministic BIP-44 and BIP-84 multi-chain address derivation
-- End-to-end threshold lifecycle flows
 
 ## License
 

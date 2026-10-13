@@ -1,7 +1,7 @@
 {
   "name": "open-mpc-vault",
   "version": "0.1.0",
-  "description": "Production-ready 2-of-2 Shamir threshold secret sharing wallet vault with HD derivation (EVM, Solana, Bitcoin) and AES-256-GCM shard encryption",
+  "description": "2-of-2 Shamir secret sharing key vault with HD wallet derivation (EVM, Solana, Bitcoin) and AES-256-GCM shard encryption",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -15,16 +15,24 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
-    "mpc",
-    "tss",
     "shamir-secret-sharing",
-    "threshold-signatures",
-    "non-custodial",
+    "key-management",
     "hd-wallet",
-    "crypto-vault"
+    "bip39",
+    "bip32",
+    "ethereum",
+    "solana",
+    "bitcoin"
   ],
-  "author": "",
+  "author": "Stanley Jinadu",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devstanl3y/open-mpc-vault.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",

@@ -1,8 +1,6 @@
 import { Response } from 'express';
 import { ShardStatus } from '@prisma/client';
-import type { IUserRequest } from '../../middleware/requireAuth';
-import prisma from '../../utils/prisma';
-import { logger } from '../../utils/logger';
+import { prisma, logger, type IUserRequest } from '../host';
 
 export const getMpcWallets = async (req: IUserRequest, res: Response) => {
   const userId = Number(req.user?.id);
