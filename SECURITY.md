@@ -14,7 +14,7 @@ The maintainers of `open-mpc-vault` take the security of cryptographic software 
 ### Disclosure Process
 
 1. **Do not open a public issue.**
-2. Send an advisory email to: **devstanak@gmail.com** with the subject line: `[SECURITY] open-mpc-vault: <Brief Summary>`.
+2. Send an advisory email to: **stanleyjinadu@gmail.com** with the subject line: `[SECURITY] open-mpc-vault: <Brief Summary>`.
 3. If necessary, request a PGP key for encrypted communication.
 4. Include the following details in your report:
    - Type of vulnerability (e.g. side-channel timing, memory leakage, polynomial interpolation edge case, cryptographic misuse).
